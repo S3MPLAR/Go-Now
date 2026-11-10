@@ -1,0 +1,79 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            artifact: windows
+          - os: ubuntu-latest
+            target: linux
+            artifact: linux
+          - os: macos-latest
+            target: mac
+            artifact: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build Windows
+        if: matrix.target == 'win'
+        run: npm run dist:win
+      - name: Build Linux
+        if: matrix.target == 'linux'
+        run: npm run dist:linux
+      - name: Build macOS
+        if: matrix.target == 'mac'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist:mac -- --x64
+      - name: Smoke Linux
+        if: matrix.target == 'linux'
+        run: xvfb-run -a npm run smoke -- --no-sandbox
+      - name: Checksums
+        run: node scripts/checksums.js ${{ matrix.target }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gonow-${{ matrix.artifact }}
+          path: |
+            dist/gonow-*.exe
+            dist/gonow-*.AppImage
+            dist/gonow-*.deb
+            dist/gonow-*.dmg
+            dist/gonow-*.zip
+            dist/SHA256SUMS*.txt
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Go, Now! ${{ github.ref_name }}
+          body_path: .github/release-notes.md
+          files: artifacts/*
