@@ -8,7 +8,6 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-ffbfa3?style=for-the-badge)](#скачать)
 [![License](https://img.shields.io/badge/license-MIT-ff7fa6?style=for-the-badge)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-ready-7d5ae0?style=for-the-badge)](#mcp-сервер)
-[![Downloads](https://img.shields.io/github/downloads/S3MPLAR/Go-Now/total?style=for-the-badge&color=2fa987)](https://github.com/S3MPLAR/Go-Now/releases)
 
 Пиксельный планер задач с виджетом прямо на рабочем столе Windows, macOS и Linux.
 Ретро-пиксельная графика, шесть цветовых тем, русский и английский интерфейс,
