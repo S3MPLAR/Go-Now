@@ -1,0 +1,51 @@
+name: Баг
+description: Что-то работает не так
+title: "[Баг]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт! Заполните поля ниже — так проблему будет проще воспроизвести.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Опишите проблему и ожидаемое поведение.
+      placeholder: При открытии планера ... Ожидал(а), что ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Открыть ...
+        2. Нажать ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия Go, Now!
+      placeholder: 2.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Операционная система
+      options:
+        - Windows 10/11
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и скриншоты
+      description: При необходимости приложите `pp-debug.log`, `bridge.log` или скриншоты.
+    validations:
+      required: false

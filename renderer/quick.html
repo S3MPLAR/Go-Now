@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:">
+  <title>Go, Now!</title>
+  <script src="shared/theme-init.js"></script>
+  <link rel="stylesheet" href="shared/theme.css">
+  <link rel="stylesheet" href="quick.css">
+</head>
+<body>
+  <div class="quick-card">
+    <div class="quick-head">
+      <span class="quick-brand">GO, NOW!</span>
+      <span class="quick-hint" id="quickHint">Enter — добавить, Esc — закрыть</span>
+    </div>
+    <input id="quickInput" type="text" maxlength="200" data-i18n-placeholder="quick.placeholder" placeholder="Например: завтра 15:00 позвонить маме" autocomplete="off" spellcheck="false">
+    <div class="quick-preview" id="quickPreview"></div>
+  </div>
+  <script src="shared/i18n.js"></script>
+  <script src="shared/quick-parse.js"></script>
+  <script src="quick.js"></script>
+</body>
+</html>

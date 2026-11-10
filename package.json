@@ -1,0 +1,145 @@
+{
+  "name": "gonow",
+  "productName": "Go, Now!",
+  "desktopName": "gonow.desktop",
+  "version": "2.0.0",
+  "description": "Pixel-art task planner with a desktop widget, reminders and MCP integration for Windows, Linux and macOS",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "node scripts/test-store.js && node scripts/test-quick-parse.js && node scripts/test-accelerators.js",
+    "mcp:smoke": "node scripts/mcp-smoke.js",
+    "ico": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-ico.ps1",
+    "brand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-brand.ps1",
+    "winicons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-winicons.ps1",
+    "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icons.ps1",
+    "dist": "electron-builder --win",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.gonow.app",
+    "productName": "Go, Now!",
+    "copyright": "Copyright © 2026 Alexander Ancibor",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "licenses/LICENSE"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "licenses/THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "renderer/assets/fonts/licenses",
+        "to": "licenses/fonts"
+      },
+      {
+        "from": "mcp",
+        "to": "mcp"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "artifactName": "gonow-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "executableName": "gonow",
+      "maintainer": "Alexander Ancibor <S3MPLAR@users.noreply.github.com>",
+      "synopsis": "Pixel task planner with a desktop widget",
+      "description": "Go, Now! is a pixel-art task planner with a desktop widget, reminders and MCP integration.",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "syncDesktopName": true,
+      "artifactName": "gonow-${version}-linux-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "Go, Now!",
+          "Comment": "Pixel task planner with a desktop widget",
+          "Categories": "Utility;Office;",
+          "StartupWMClass": "gonow"
+        }
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "license": "LICENSE",
+      "artifactName": "gonow-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "gonow-${version}-portable.${ext}"
+    }
+  },
+  "author": "Alexander Ancibor",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/S3MPLAR/Go-Now.git"
+  },
+  "homepage": "https://github.com/S3MPLAR/Go-Now#readme",
+  "bugs": {
+    "url": "https://github.com/S3MPLAR/Go-Now/issues"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "tasks",
+    "planner",
+    "todo",
+    "desktop-widget",
+    "electron",
+    "reminders",
+    "mcp",
+    "pixel-art",
+    "windows",
+    "linux",
+    "macos",
+    "offline",
+    "productivity"
+  ],
+  "devDependencies": {
+    "electron": "^45.2.2",
+    "electron-builder": "^26.18.0"
+  }
+}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:">
+  <title>Go, Now! Widget</title>
+  <script src="shared/theme-init.js"></script>
+  <link rel="stylesheet" href="shared/theme.css">
+  <link rel="stylesheet" href="widget.css">
+  <link rel="stylesheet" href="shared/picker.css">
+</head>
+<body>
+  <div class="widget">
+    <header class="widget-head" id="dragHandle" data-i18n-title="widget.drag" title="Перетащите, чтобы переместить">
+      <div class="head-text">
+        <div class="widget-title" data-i18n="widget.today">СЕГОДНЯ</div>
+        <div class="widget-date" id="todayLabel"></div>
+      </div>
+      <button class="pixel-btn small" id="openPlanner" data-i18n="widget.openPlanner" data-i18n-title="widget.openPlannerTitle" title="Открыть планер">ПЛАНЕР</button>
+    </header>
+    <div class="progress" aria-hidden="true">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="list-wrap">
+      <ul class="task-list" id="taskList"></ul>
+      <div class="empty" id="emptyState" hidden>
+        <div class="empty-check" aria-hidden="true"></div>
+        <p><span data-i18n="widget.emptyTitle">Свободно!</span><br><span data-i18n="widget.emptyText">Добавь первое дело.</span></p>
+      </div>
+    </div>
+    <form class="add-row" id="addForm" hidden>
+      <div class="edit-label" id="editLabel" data-i18n="widget.editing" hidden>ТЕКУЩЕЕ ДЕЛО</div>
+      <div class="add-main">
+        <input id="addInput" type="text" maxlength="140" data-i18n-placeholder="widget.newTaskPlaceholder" placeholder="Новое дело..." autocomplete="off">
+        <button type="submit" class="pixel-btn small" data-i18n="button.ok">ОК</button>
+      </div>
+      <div class="add-flags">
+        <label class="add-flag">
+          <input type="checkbox" id="noNotifyToggle" class="pixel-check small">
+          <span data-i18n="widget.noNotify">без увед.</span>
+        </label>
+        <div class="add-flags-right">
+          <button type="button" class="pixel-btn ghost small when-btn" id="whenBtn" data-i18n-title="widget.whenTitle" data-i18n="widget.when">ДАТА</button>
+          <button type="button" class="pixel-btn ghost small when-btn" id="cancelEdit" data-i18n="button.cancel" hidden>ОТМЕНА</button>
+        </div>
+      </div>
+      <div class="when-row" id="whenRow" hidden>
+        <input type="date" id="addDate">
+        <input type="time" id="addTime">
+      </div>
+    </form>
+    <footer class="widget-foot">
+      <button class="plus-btn" id="plusBtn" data-i18n-title="widget.addTitle" title="Добавить задачу" aria-label="Add task"></button>
+      <span class="counter" id="counter">0 / 0</span>
+    </footer>
+    <div class="resize-grip" id="resizeGrip" data-i18n-title="widget.resize" title="Изменить размер"></div>
+  </div>
+  <script src="shared/i18n.js"></script>
+  <script src="shared/picker.js"></script>
+  <script src="widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.quick-card {
+  box-sizing: border-box;
+  height: calc(100% - 12px);
+  margin: 6px;
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 3px solid var(--line);
+  background: var(--panel);
+  box-shadow: 6px 6px 0 var(--shadow);
+}
+
+.quick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quick-brand {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--rose-dark);
+}
+
+.quick-hint {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+#quickInput {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 20px;
+  padding: 9px 12px;
+}
+
+.quick-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 26px;
+  align-items: center;
+}
+
+.quick-chip {
+  font-size: 11px;
+  letter-spacing: 1px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.quick-chip.date {
+  background: var(--peach);
+}
+
+.quick-chip.time {
+  background: var(--pink);
+  color: var(--on-accent);
+}
+
+.quick-chip.important {
+  background: var(--rose);
+  color: var(--on-accent);
+}
+
+.quick-chip.tag {
+  background: var(--peach-deep);
+}
+
+.quick-chip.no-due {
+  background: var(--bg);
+  color: var(--ink-soft);
+}
+
+.quick-empty {
+  font-size: 12px;
+  color: var(--ink-soft);
+}

@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:">
+  <title>Go, Now!</title>
+  <script src="shared/theme-init.js"></script>
+  <link rel="stylesheet" href="shared/theme.css">
+  <link rel="stylesheet" href="planner.css">
+  <link rel="stylesheet" href="shared/picker.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand">
+      <img class="brand-logo" id="brandLogo" src="assets/logo.png" alt="Go, Now!">
+    </div>
+    <div class="win-controls">
+      <button id="btnMin" class="win-btn" data-i18n-title="window.minimize" aria-label="Minimize"></button>
+      <button id="btnMax" class="win-btn max" data-i18n-title="window.maximize" aria-label="Maximize"></button>
+      <button id="btnClose" class="win-btn close" data-i18n-title="window.hideToTray" aria-label="Hide to tray"></button>
+    </div>
+  </header>
+
+  <div class="app">
+    <main class="main-panel">
+      <div class="toolbar">
+        <button id="btnPrev" class="pixel-btn ghost small" data-i18n-title="nav.prev">&laquo;</button>
+        <button id="btnToday" class="pixel-btn small" data-i18n="nav.today">СЕГОДНЯ</button>
+        <button id="btnNext" class="pixel-btn ghost small" data-i18n-title="nav.next">&raquo;</button>
+        <h2 id="rangeLabel" class="range-label"></h2>
+        <div class="views">
+          <button id="tabDay" class="view-tab active" data-i18n="views.day">ДЕНЬ</button>
+          <button id="tabWeek" class="view-tab" data-i18n="views.week">НЕДЕЛЯ</button>
+        </div>
+      </div>
+
+      <div class="search-bar">
+        <input id="searchInput" type="search" data-i18n-placeholder="search.placeholder" placeholder="Поиск: текст или #тег" autocomplete="off">
+        <button type="button" class="pixel-btn ghost small" id="searchClear" data-i18n="search.clear" hidden>СБРОС</button>
+      </div>
+      <div class="filter-chips" id="filterChips">
+        <button type="button" class="filter-chip active" data-filter="all" data-i18n="filter.all">ВСЕ</button>
+        <button type="button" class="filter-chip" data-filter="active" data-i18n="filter.active">АКТИВНЫЕ</button>
+        <button type="button" class="filter-chip" data-filter="done" data-i18n="filter.done">ВЫПОЛНЕННЫЕ</button>
+        <button type="button" class="tag-chip filter-tag" id="activeTagChip" hidden></button>
+      </div>
+
+      <section id="dayView" class="content card">
+        <div class="day-head">
+          <h3 id="dayTitle"></h3>
+          <span id="dayStats" class="stats"></span>
+        </div>
+        <ul id="dayList" class="day-list"></ul>
+        <div id="overdueWrap" class="no-due" hidden>
+          <h4 class="no-due-title" data-i18n="day.incomplete">НЕЗАВЕРШЁННЫЕ</h4>
+          <ul id="overdueList" class="day-list"></ul>
+        </div>
+        <div id="noDueWrap" class="no-due" hidden>
+          <h4 class="no-due-title" data-i18n="day.noDue">БЕЗ СРОКА</h4>
+          <ul id="noDueList" class="day-list"></ul>
+        </div>
+        <div id="dayEmpty" class="day-empty" hidden>
+          <div class="empty-check" aria-hidden="true"></div>
+          <p data-i18n="day.empty">На этот день пока пусто.</p>
+        </div>
+      </section>
+
+      <section id="weekView" class="content" hidden>
+        <div class="week-grid" id="weekGrid"></div>
+      </section>
+
+      <section id="searchView" class="content card" hidden>
+        <div class="day-head">
+          <h3 data-i18n="search.title">ПОИСК</h3>
+          <span id="searchStats" class="stats"></span>
+          <button type="button" class="pixel-btn ghost small" id="clearDoneBtn" hidden data-i18n="search.clearDone">ОЧИСТИТЬ ВЫПОЛНЕННЫЕ</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+        <div id="searchEmpty" class="day-empty" hidden>
+          <div class="empty-check" aria-hidden="true"></div>
+          <p data-i18n="search.empty">Ничего не найдено.</p>
+        </div>
+      </section>
+    </main>
+
+    <aside class="side-panel">
+      <section class="card add-card">
+        <h3 class="card-title" id="addCardTitle" data-i18n="add.title">НОВОЕ ДЕЛО</h3>
+        <form id="addForm" class="add-form">
+          <div class="field">
+            <label for="titleInput" data-i18n="field.task">Задача</label>
+            <input id="titleInput" type="text" maxlength="140" data-i18n-placeholder="placeholder.task" placeholder="Что нужно сделать?" required autocomplete="off">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="dateInput" data-i18n="field.date">Дата</label>
+              <input id="dateInput" type="date" required>
+            </div>
+            <div class="field">
+              <label for="timeInput" data-i18n="field.time">Время</label>
+              <input id="timeInput" type="time">
+            </div>
+          </div>
+          <div class="field">
+            <label data-i18n="field.repeat">Повтор</label>
+            <div class="repeat-field">
+              <button type="button" class="repeat-btn" id="repeatBtn" aria-haspopup="listbox" aria-expanded="false"></button>
+              <input type="hidden" id="repeatInput" value="none">
+            </div>
+          </div>
+          <div class="field">
+            <label for="tagsInput" data-i18n="field.tags">Теги</label>
+            <div class="tags-row">
+              <input id="tagsInput" type="text" maxlength="140" data-i18n-placeholder="placeholder.tags" placeholder="работа, дом" autocomplete="off">
+              <button type="button" class="pixel-btn ghost small tag-toggle" id="tagsToggle" aria-expanded="false" data-i18n-title="tags.toggle" data-i18n-aria-label="tags.toggle"></button>
+            </div>
+            <p class="hint" data-i18n="tags.hint">До 5 тегов через запятую.</p>
+          </div>
+          <label class="check-line">
+            <input type="checkbox" id="importantToggle" class="pixel-check">
+            <span data-i18n="field.important">Важное</span>
+          </label>
+          <label class="check-line">
+            <input type="checkbox" id="noNotifyToggle" class="pixel-check">
+            <span data-i18n="field.noNotify">Без уведомления</span>
+          </label>
+          <p class="hint" id="noNotifyHint" data-i18n="noNotify.hint" hidden>Задача будет просто в списке, без срока и напоминаний.</p>
+          <div class="field">
+            <label for="noteInput" data-i18n="field.note">Заметка</label>
+            <div class="note-row">
+              <textarea id="noteInput" rows="1" maxlength="1000" data-i18n-placeholder="placeholder.note" placeholder="Комментарий"></textarea>
+            </div>
+          </div>
+          <div class="add-actions">
+            <button class="pixel-btn add-submit" type="submit" id="addSubmit" data-i18n="button.add">+ ДОБАВИТЬ</button>
+            <button class="pixel-btn ghost small" type="button" id="cancelEdit" data-i18n="button.cancel" hidden>ОТМЕНА</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card stats-card">
+        <button type="button" class="settings-toggle" id="statsToggle" aria-expanded="false">
+          <span class="settings-plus" aria-hidden="true"></span>
+          <span data-i18n="stats.title">СТАТИСТИКА</span>
+        </button>
+        <div class="settings-body" id="statsBody" hidden>
+          <div class="stats-grid">
+            <div class="stat-block">
+              <span class="stat-value" id="statToday">0</span>
+              <span class="stat-label" data-i18n="stats.today">СЕГОДНЯ</span>
+            </div>
+            <div class="stat-block">
+              <span class="stat-value" id="statWeek">0</span>
+              <span class="stat-label" data-i18n="stats.week">ЗА 7 ДНЕЙ</span>
+            </div>
+          </div>
+          <div class="stats-chart" id="statsChart"></div>
+          <p class="hint" id="statsHint"></p>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <button type="button" class="settings-toggle" id="settingsToggle" aria-expanded="false">
+          <span class="settings-plus" aria-hidden="true"></span>
+          <span data-i18n="settings.title">НАСТРОЙКИ</span>
+        </button>
+        <div class="settings-body" id="settingsBody" hidden>
+          <div class="field">
+            <label data-i18n="field.theme">Цветовая тема</label>
+            <div class="theme-grid" id="themeGrid">
+              <button type="button" class="theme-card" data-theme="peach"><span class="theme-dot"></span><span data-i18n="theme.peach">Персик</span></button>
+              <button type="button" class="theme-card" data-theme="mint"><span class="theme-dot"></span><span data-i18n="theme.mint">Мята</span></button>
+              <button type="button" class="theme-card" data-theme="sky"><span class="theme-dot"></span><span data-i18n="theme.sky">Небо</span></button>
+              <button type="button" class="theme-card" data-theme="lavender"><span class="theme-dot"></span><span data-i18n="theme.lavender">Лаванда</span></button>
+              <button type="button" class="theme-card" data-theme="night"><span class="theme-dot"></span><span data-i18n="theme.night">Ночь</span></button>
+              <button type="button" class="theme-card" data-theme="mono"><span class="theme-dot"></span><span data-i18n="theme.mono">Монохром</span></button>
+            </div>
+          </div>
+          <div class="field">
+            <label data-i18n="field.language">Язык</label>
+            <div class="language-row" id="languageRow">
+              <button type="button" class="lang-card active" data-language="ru" title="Русский">РУС</button>
+              <button type="button" class="lang-card" data-language="en" title="English">ENG</button>
+            </div>
+          </div>
+          <div class="field">
+            <label data-i18n="field.logo">Логотип</label>
+            <div class="logo-row">
+              <img id="logoPreview" class="logo-preview" src="assets/logo.png" alt="Logo">
+              <div class="logo-actions">
+                <button type="button" class="pixel-btn ghost small" id="logoChooseBtn" data-i18n="logo.choose">ВЫБРАТЬ</button>
+                <button type="button" class="pixel-btn ghost small" id="logoResetBtn" data-i18n="logo.reset">СБРОС</button>
+              </div>
+            </div>
+            <p class="hint" id="logoHint" data-i18n="logo.hint">PNG, JPG или WebP. Показывается в шапке планера.</p>
+          </div>
+          <div class="field">
+            <label data-i18n="field.hotkeys">Горячие клавиши</label>
+            <div class="hotkey-item">
+              <span class="hotkey-label" data-i18n="hotkey.planner">Открыть планер</span>
+              <div class="hotkey-row">
+                <input id="hotkeyInput" class="hotkey-input" readonly placeholder="Alt + Shift + Q">
+                <button type="button" class="pixel-btn ghost small" id="hotkeyReset" data-i18n="hotkey.clear">СБРОС</button>
+              </div>
+              <p class="hint" id="hotkeyHint" data-i18n="hotkey.hint">Например, Ctrl+Shift+G. Работает, пока приложение запущено.</p>
+            </div>
+            <div class="hotkey-item">
+              <span class="hotkey-label" data-i18n="hotkey.quick">Быстрое добавление</span>
+              <div class="hotkey-row">
+                <input id="quickHotkeyInput" class="hotkey-input" readonly placeholder="Ctrl + Alt + Space">
+                <button type="button" class="pixel-btn ghost small" id="quickHotkeyReset" data-i18n="hotkey.clear">СБРОС</button>
+              </div>
+              <p class="hint" id="quickHotkeyHint" data-i18n="hotkey.quickHint">Например, Ctrl+Alt+Space. Работает, пока приложение запущено.</p>
+            </div>
+          </div>
+          <div class="settings-divider" aria-hidden="true"></div>
+          <label class="check-line">
+            <input type="checkbox" id="autostartToggle" class="pixel-check">
+            <span data-i18n="autostart.label">Автозапуск с Windows</span>
+          </label>
+          <label class="check-line">
+            <input type="checkbox" id="openPlannerToggle" class="pixel-check">
+            <span data-i18n="settings.openPlanner">Открывать планер при запуске</span>
+          </label>
+          <button class="pixel-btn ghost small" id="pinBtn" data-i18n="pin.button">ЗАКРЕПИТЬ ВИДЖЕТ НА СТОЛЕ</button>
+          <p class="hint" id="pinHint" data-i18n="pin.hint">Виджет живёт на рабочем столе за иконками.</p>
+          <label class="check-line" id="widgetOnTopLine" hidden>
+            <input type="checkbox" id="widgetOnTopToggle" class="pixel-check">
+            <span data-i18n="widget.onTop">Поверх окон</span>
+          </label>
+          <div class="field data-field">
+            <label data-i18n="field.data">Данные</label>
+            <div class="hotkey-row">
+              <button type="button" class="pixel-btn ghost small" id="exportBtn" data-i18n="data.export">ЭКСПОРТ</button>
+              <button type="button" class="pixel-btn ghost small" id="importBtn" data-i18n="data.import">ИМПОРТ</button>
+              <button type="button" class="pixel-btn ghost small" id="openDataBtn" data-i18n="data.openFolder">ПАПКА</button>
+            </div>
+            <p class="hint" id="dataHint" data-i18n="data.hint">Экспорт и импорт задач в JSON.</p>
+          </div>
+          <div class="field">
+            <label for="cleanupSelect" data-i18n="field.cleanup">Очистка выполненных</label>
+            <select id="cleanupSelect">
+              <option value="never" data-i18n="cleanup.never">Хранить всё</option>
+              <option value="30" data-i18n="cleanup.30">Удалять старше 30 дней</option>
+              <option value="90" data-i18n="cleanup.90">Удалять старше 90 дней</option>
+            </select>
+            <p class="hint" id="cleanupHint" data-i18n="cleanup.hint">Удаляются только выполненные задачи. Бэкапы сохраняются.</p>
+          </div>
+          <div class="field">
+            <label data-i18n="field.mcp">MCP для AI-агента</label>
+            <button type="button" class="pixel-btn ghost small" id="mcpBtn" data-i18n="mcp.button">ПОДКЛЮЧИТЬ MCP</button>
+            <p class="hint" data-i18n="mcp.short">Дайте агенту доступ к вашим задачам.</p>
+          </div>
+          <p class="hint app-version" id="appVersion"></p>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+    <span class="toast-text" id="toastText"></span>
+    <button type="button" class="pixel-btn small" id="toastUndo" data-i18n="toast.undo">ОТМЕНИТЬ</button>
+  </div>
+
+  <div class="mcp-overlay" id="mcpOverlay" hidden>
+    <div class="mcp-modal" role="dialog" aria-modal="true" aria-labelledby="mcpTitle">
+      <div class="mcp-head">
+        <h3 id="mcpTitle" data-i18n="mcp.title">Подключить MCP</h3>
+        <button type="button" class="pixel-btn ghost small" id="mcpClose" data-i18n="mcp.close">ЗАКРЫТЬ</button>
+      </div>
+      <p class="mcp-text" data-i18n="mcp.intro">Go, Now! умеет работать с AI-агентами через MCP.</p>
+      <ul class="mcp-list">
+        <li data-i18n="mcp.what1">Смотреть задачи: на сегодня, за период, по поиску.</li>
+        <li data-i18n="mcp.what2">Добавлять одну или несколько задач.</li>
+        <li data-i18n="mcp.what3">Редактировать, отмечать выполненными и удалять.</li>
+        <li data-i18n="mcp.what4">Изменения сразу появляются в планере и виджете.</li>
+      </ul>
+      <h4 class="mcp-subtitle" data-i18n="mcp.commandTitle">Команда для подключения</h4>
+      <div class="mcp-clients" id="mcpClients"></div>
+      <p class="hint" id="mcpMissing" hidden data-i18n="mcp.missing">MCP-сервер не найден в этой сборке.</p>
+      <p class="hint mcp-note" data-i18n="mcp.note">Приложение запущено — изменения сразу в интерфейсе; закрыто — сервер пишет в файл. Всё локально, без интернета.</p>
+    </div>
+  </div>
+
+  <script src="shared/i18n.js"></script>
+  <script src="shared/picker.js"></script>
+  <script src="planner.js"></script>
+</body>
+</html>
