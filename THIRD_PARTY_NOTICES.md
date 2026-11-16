@@ -41,3 +41,11 @@ the MIT License.
 - Electron (https://www.electronjs.org) — MIT License, Copyright
   Electron contributors and GitHub Inc.
 - Node.js (https://nodejs.org) — MIT License.
+- Koffi (https://koffi.dev) — MIT License, Copyright (C) 2026 Niels Martignène.
+  Native FFI used for pinning the widget to the Windows desktop.
+  Platform packages `@koromix/koffi-*` are part of the same project.
+- `@modelcontextprotocol/server` and `@modelcontextprotocol/core`
+  (https://github.com/modelcontextprotocol/typescript-sdk) — Apache-2.0.
+  Bundled into the MCP server for AI assistants.
+- Zod (https://zod.dev) — MIT License. Schema validation bundled into the MCP
+  server.

@@ -18,3 +18,7 @@ bridge.json
 store.lock
 pixel-planner.json
 shot-*.png
+
+test-results/
+playwright-report/
+

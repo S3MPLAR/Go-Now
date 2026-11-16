@@ -120,6 +120,25 @@
     return null;
   }
 
+  function matchRecurrence(text) {
+    const every = /(^|[\s,;])(?:каждые|every)\s+(\d{1,3})\s*(?:день|дня|дней|day|days)(?=$|[\s,;.!?])/iu.exec(text);
+    if (every) {
+      const interval = Math.min(365, Math.max(2, Number(every[2]) || 2));
+      return { recurrence: 'everyN', interval, match: every[0] };
+    }
+    const patterns = [
+      { re: /(^|[\s,;])(?:каждый день|ежедневно|every day|daily)(?=$|[\s,;.!?])/iu, recurrence: 'daily' },
+      { re: /(^|[\s,;])(?:каждую неделю|еженедельно|every week|weekly)(?=$|[\s,;.!?])/iu, recurrence: 'weekly' },
+      { re: /(^|[\s,;])(?:каждый месяц|ежемесячно|every month|monthly)(?=$|[\s,;.!?])/iu, recurrence: 'monthly' },
+      { re: /(^|[\s,;])(?:по будням|каждый рабочий день|weekdays)(?=$|[\s,;.!?])/iu, recurrence: 'weekdays' }
+    ];
+    for (const item of patterns) {
+      const match = item.re.exec(text);
+      if (match) return { recurrence: item.recurrence, interval: null, match: match[0] };
+    }
+    return null;
+  }
+
   function parseQuickAdd(raw, now, language) {
     const base = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
     let text = String(raw || '');
@@ -129,7 +148,9 @@
       time: null,
       tags: [],
       important: false,
-      notify: true
+      notify: true,
+      recurrence: 'none',
+      recurrenceInterval: null
     };
 
     text = text.replace(/#([\p{L}\p{N}_-]+)/gu, (match, tag) => {
@@ -150,6 +171,17 @@
       result.notify = false;
       result.date = null;
       text = text.replace(noDateRe, ' ');
+    }
+
+    const recurrenceMatch = matchRecurrence(text);
+    if (recurrenceMatch) {
+      result.recurrence = recurrenceMatch.recurrence;
+      result.recurrenceInterval = recurrenceMatch.interval;
+      text = text.replace(recurrenceMatch.match, ' ');
+    }
+    if (!result.notify) {
+      result.recurrence = 'none';
+      result.recurrenceInterval = null;
     }
 
     if (result.notify) {

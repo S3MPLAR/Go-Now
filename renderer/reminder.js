@@ -11,10 +11,9 @@ const card = document.querySelector('.reminder-card');
 
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
 
-let currentId = null;
 let currentTask = null;
-let autoTimer = null;
 let acting = false;
+let soundToken = 0;
 
 function animateIn() {
   if (!card) return;
@@ -38,8 +37,20 @@ function animateOut(callback) {
 function act(action) {
   if (acting) return;
   acting = true;
-  clearTimeout(autoTimer);
-  animateOut(() => api.reminderAction(action));
+  soundToken += 1;
+  if (window.ppSound) window.ppSound.stop();
+  animateOut(async () => {
+    try {
+      await api.reminderAction(action);
+    } catch (err) {
+      console.error('[reminder] action failed:', err.message);
+      acting = false;
+      if (card) {
+        card.classList.remove('leaving');
+        animateIn();
+      }
+    }
+  });
 }
 
 function stripTrailing(url) {
@@ -89,11 +100,12 @@ function formatWhen(task) {
   return `${d}.${m}.${y} · ${time}`;
 }
 
-function render(task) {
-  if (!task || task.id === currentId) return;
-  currentId = task.id;
+function render(task, show = false) {
+  if (!task) return;
   currentTask = task;
-  acting = false;
+  if (show) {
+    acting = false;
+  }
   rmTitle.textContent = task.title;
   rmTime.textContent = formatWhen(task);
 
@@ -116,40 +128,31 @@ function render(task) {
     rmLinkBtn.onclick = null;
     rmLinkBtn.textContent = '';
   }
-
-  playSoftChime();
-  clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => act('snooze'), 60000);
 }
 
-function playSoftChime() {
+async function playNotificationSound(task) {
+  const current = ++soundToken;
+  let volume = 0.8;
   try {
-    const ctx = new AudioContext();
-    const now = ctx.currentTime;
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(0.0001, now);
-    master.gain.exponentialRampToValueAtTime(0.05, now + 0.035);
-    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.95);
-    master.connect(ctx.destination);
-    const partials = [
-      { freq: 659.25, gain: 0.75 },
-      { freq: 987.77, gain: 0.18 },
-      { freq: 1318.51, gain: 0.05 }
-    ];
-    for (const partial of partials) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = partial.freq;
-      gain.gain.value = partial.gain;
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(now);
-      osc.stop(now + 1.05);
+    const info = await api.getSound();
+    const id = task && task.soundId ? task.soundId : (info && info.value ? info.value : 'soft');
+    volume = info && Number.isFinite(Number(info.volume)) ? Number(info.volume) / 100 : 0.8;
+    const custom = info && Array.isArray(info.custom) && info.custom.some((item) => item.id === id);
+    let dataUrl = null;
+    if (custom) {
+      const data = await api.getSoundData(id);
+      if (data && data.dataUrl) dataUrl = data.dataUrl;
     }
-    setTimeout(() => ctx.close(), 1300);
+    if (current !== soundToken || acting) return;
+    await window.ppSound.play(id, dataUrl, volume);
   } catch (err) {
-    console.error('[reminder] audio failed:', err.message);
+    console.error('[reminder] sound failed:', err.message);
+    if (current !== soundToken || acting) return;
+    try {
+      await window.ppSound.play('soft', null, volume);
+    } catch (fallbackErr) {
+      // ignore
+    }
   }
 }
 
@@ -157,7 +160,9 @@ document.getElementById('btnDone').addEventListener('click', () => act('done'));
 document.getElementById('btnSnooze').addEventListener('click', () => act('snooze'));
 
 api.onReminderShow((task) => {
-  render(task);
+  if (!task) return;
+  render(task, true);
+  playNotificationSound(task);
   animateIn();
 });
 api.reminderCurrent().then((task) => {

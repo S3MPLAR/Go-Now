@@ -42,6 +42,12 @@
       if (parsed.date) chips.push({ text: formatDate(parsed.date), cls: 'date' });
       if (parsed.time) chips.push({ text: parsed.time, cls: 'time' });
     }
+    if (parsed.recurrence && parsed.recurrence !== 'none') {
+      const label = parsed.recurrence === 'everyN'
+        ? t('rec.everyN', { count: parsed.recurrenceInterval })
+        : t(`rec.${parsed.recurrence}`);
+      chips.push({ text: label, cls: 'repeat' });
+    }
     if (parsed.important) chips.push({ text: t('quick.important'), cls: 'important' });
     for (const tag of parsed.tags) chips.push({ text: `#${tag}`, cls: 'tag' });
 
@@ -67,7 +73,8 @@
       title,
       date: parsed.notify ? parsed.date : null,
       time: parsed.notify ? parsed.time : null,
-      recurrence: 'none',
+      recurrence: parsed.recurrence,
+      recurrenceInterval: parsed.recurrenceInterval,
       notify: parsed.notify,
       note: '',
       important: parsed.important,

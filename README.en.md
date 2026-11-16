@@ -1,62 +1,12 @@
-![Go, Now!](docs/banner-en.png)
-
 # Go, Now!
 
-[Русский](README.md) | **English**
-
-[![Release](https://img.shields.io/github/v/release/S3MPLAR/Go-Now?style=for-the-badge&color=e85d8a&label=release)](https://github.com/S3MPLAR/Go-Now/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-ffbfa3?style=for-the-badge)](#download)
-[![License](https://img.shields.io/badge/license-MIT-ff7fa6?style=for-the-badge)](LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-ready-7d5ae0?style=for-the-badge)](#mcp-server)
-
-A pixel-art task planner with a desktop widget for Windows, macOS and Linux.
+A pixel-art task planner with a desktop widget for Windows.
 Retro pixel graphics, six color themes, Russian and English UI, local-only data,
 and optional AI-assistant integration via MCP.
 
-Version 2.0.0 · Windows 10/11 · Linux · macOS (x64) · MIT
+Version 2.1.0 · Windows 10/11, macOS, Linux (x64) · MIT
 
 Support the project: [Boosty](https://boosty.to/anc/donate)
-
-## Download
-
-Latest version — [**v2.0.0**](https://github.com/S3MPLAR/Go-Now/releases/latest).
-
-| Platform | Download |
-| --- | --- |
-| **Windows 10/11 (x64)** | [Installer](https://github.com/S3MPLAR/Go-Now/releases/latest) · [Portable](https://github.com/S3MPLAR/Go-Now/releases/latest) |
-| **Linux (x64)** | [AppImage](https://github.com/S3MPLAR/Go-Now/releases/latest) · [deb](https://github.com/S3MPLAR/Go-Now/releases/latest) |
-| **macOS (x64)** | [dmg](https://github.com/S3MPLAR/Go-Now/releases/latest) · [zip](https://github.com/S3MPLAR/Go-Now/releases/latest) |
-
-All builds are unsigned: Windows SmartScreen and macOS Gatekeeper may show a
-warning on first launch. Checksums are attached to the release
-(`SHA256SUMS-*.txt`).
-
-## Screenshots
-
-| Planner | Desktop widget |
-| --- | --- |
-| <img src="docs/screenshot-planner-en.png" alt="Planner"> | <img src="docs/screenshot-widget.png" width="320" alt="Widget"> |
-
-| Quick add | MCP |
-| --- | --- |
-| <img src="docs/screenshot-quick-add.png" alt="Quick add"> | <img src="docs/screenshot-mcp-en.png" alt="MCP"> |
-
-![Six themes](docs/screenshot-themes-en.png)
-
-## Contents
-
-- [Download](#download)
-- [Screenshots](#screenshots)
-- [Features](#features)
-- [Keyboard shortcuts](#keyboard-shortcuts)
-- [Installation](#installation)
-- [Data and privacy](#data-and-privacy)
-- [MCP server](#mcp-server)
-- [Building from source](#building-from-source)
-- [Structure](#structure)
-- [Limitations](#limitations)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Features
 
@@ -88,18 +38,21 @@ warning on first launch. Checksums are attached to the release
   `#tags`, `!` (important) and "no date". Chips preview the parse before saving,
   Enter adds, Esc closes.
 - **Search and filters** — search across titles, notes and tags on all dates,
-  results grouped by day; filters All / Active / Done and a tag filter. Completed
-  tasks can be reviewed in the archive and cleared with one button
-  (confirmation + undo).
+  results grouped by day; filters All / Active / Done / Archive and a tag filter.
+  Completed tasks can be archived with one button, restored, or deleted forever;
+  auto-archiving is configurable for 30 or 90 days.
+- **Command palette** — `Ctrl+K` (or `Cmd+K`): fuzzy command search, arrow keys
+  and Enter; new task, search, day/week, archive, statistics, settings, MCP,
+  export/import, data folder, themes and languages.
 - **Important, tags and order** — the "!" flag lifts a task in the list; up to five
   tags per task, clicking a tag applies a filter; drag to reorder within a day,
   drop onto another day in the week view.
-- **Undo** — deleting, completing and clearing the archive show a 6-second toast
-  with an Undo button.
+- **Undo** — deleting, completing, archiving, restoring and clearing the archive
+  show a 6-second toast with an Undo button.
 - **Statistics** — done today, last 7 days and a day streak; a mini bar chart in
   the side panel.
 - **Data safety** — atomic file writes, daily backups in `backups/` (7 kept),
-  recovery from `.bak` on corrupt JSON, and optional auto-cleanup of completed
+  recovery from `.bak` on corrupt JSON, and optional auto-archiving of completed
   tasks (off by default). The Folder button opens the data directory.
 - **No due date / no reminder** — the "No reminder" flag in the planner and the
   widget's quick add puts a task into the "No due date" section with no date,
@@ -113,16 +66,20 @@ warning on first launch. Checksums are attached to the release
 - **Startup option** — disable opening the planner on launch (widget only).
 - **Export / import** — tasks can be saved to and loaded from JSON in settings
   (import replaces the list after confirmation).
-- **Repeats** — daily / weekly: completing a task creates the next one.
-  Unchecking removes the auto-created copy.
-- **Reminders** — a compact popup with a soft chime: task title, note, clickable
-  links. "Done" and "+10 min" buttons, auto-snooze after a minute.
+- **Repeats** — daily, weekly, monthly, weekdays, or every N days: completing a
+  task creates the next one. Unchecking removes the auto-created copy.
+- **Reminders** — a compact popup with a configurable notification sound: task
+  title, note, clickable links. "Done" and "+10 min" buttons, auto-snooze after
+  a minute.
 - **Tray and autostart** — the app minimizes to the tray; autostart with Windows
   (enabled after installation).
 - **Themes** — six palettes: Peach (default), Mint, Sky, Lavender, Night and
   black-and-white Monochrome. Applied to the planner, widget and reminders.
 - **Custom logo** — PNG/JPG/WebP: the image is copied to the data folder and
   replaces the logo in the planner header; Reset restores the default.
+- **Notification sound** — 6 built-in options and up to 5 custom
+  MP3/WAV/OGG/M4A files up to 5 MB: pick from a list, preview, adjust volume and
+  remove custom sounds; separate sounds for Important and custom tags.
 - **Languages** — Russian and English, switchable in settings.
 
 ## Keyboard shortcuts
@@ -142,18 +99,18 @@ warning on first launch. Checksums are attached to the release
 ## Installation
 
 **Windows 10/11 (x64)**
-1. Download `gonow-2.0.0-setup.exe` (installer) or `gonow-2.0.0-portable.exe`
+1. Download `gonow-2.1.0-setup.exe` (installer) or `gonow-2.1.0-portable.exe`
    (portable, no installation).
 2. Run it. The installer installs per-user (no administrator rights) and creates
    desktop and Start menu shortcuts.
 3. The planner opens on first launch and the widget appears on the desktop.
 
 **Linux (x64)**
-- AppImage: `chmod +x gonow-*-linux-*.AppImage`, then run it.
-- Debian/Ubuntu: `sudo apt install ./gonow-*-linux-*.deb`.
+- AppImage: `chmod +x gonow-2.1.0-linux-x86_64.AppImage`, then run it.
+- Debian/Ubuntu: `sudo apt install ./gonow-2.1.0-linux-amd64.deb`.
 
 **macOS (x64, unsigned)**
-- `gonow-*-mac-x64.dmg` or `.zip`.
+- `gonow-2.1.0-mac-x64.dmg` or `.zip`.
 - Gatekeeper may block the first launch: right-click `Go, Now!.app` → Open, or
   run `xattr -cr "/Applications/Go, Now!.app"`.
 
@@ -176,18 +133,27 @@ Data lives in the app data folder:
 
 ## MCP server
 
-`mcp/gonow-mcp.js` is a dependency-free stdio MCP server for AI assistants
-(opencode and other MCP clients). Tools:
+`mcp/gonow-mcp.js` is a stdio MCP server for AI assistants (opencode and other
+MCP clients). The TypeScript sources (`mcp/src/`) use the official
+`@modelcontextprotocol/server` v2 and Zod; `npm run build:mcp` bundles them into
+one CJS file. Requires Node.js >= 20. Tools:
 
-- `list_tasks` — filters `date`, `from`/`to`, `search`, `include_done`;
+- `list_tasks` — filters `date`, `from`/`to`, `search`, `include_done`,
+  `include_archived`;
 - `add_task` — one task (including `important` and `tags`);
 - `add_tasks` — several tasks in one call;
 - `update_task` — edit by `id` (including `done`, `important`, `tags`);
-- `delete_task` — delete by `id`.
+- `delete_task` — delete by `id`;
+- `complete_task` — complete or reopen a task;
+- `snooze_task` — snooze a reminder by N minutes;
+- `get_stats` — active, done, archived, overdue, today and 7-day counts;
+- `list_tags` — tags with task counts;
+- `archive_task` / `restore_task` — archive and restore by `id`.
 
-While the app is running, MCP uses the local HTTP bridge, so changes appear in the
-UI immediately. When the app is closed, the server writes to the data file
-directly (atomic, with a lock); changes are picked up on the next launch.
+While the app is running, MCP uses the local bridge (named pipe on Windows, Unix
+socket on macOS/Linux), so changes appear in the UI immediately. When the app is
+closed, the server writes to the data file directly (atomic, with a lock);
+changes are picked up on the next launch.
 
 The bridge logs requests to the app data folder (`bridge.log`,
 `method path status ms`) and exposes `GET /health`. Quick check:
@@ -218,9 +184,10 @@ editing required.
 
 ```powershell
 npm install
-npm start          # run
+npm start          # run (builds MCP when needed)
 npm test           # store and parser tests
 npm run smoke      # app boot check
+npm run build:mcp  # build mcp/gonow-mcp.js from mcp/src
 npm run mcp:smoke  # MCP check (bridge or file mode)
 npm run dist:win   # Windows: installer + portable
 npm run dist:linux # Linux: AppImage + deb (Linux or CI)
@@ -246,14 +213,16 @@ main.js              — main process: windows, tray, reminders, IPC, bridge
 preload.js           — safe renderer ↔ main bridge
 src/store.js         — tasks, repeats, snooze, due-task checks
 src/pin.js           — desktop pinning (PowerShell + WorkerW)
+src/sound-routing.js — sound selection for important tasks and tags
 src/platform.js      — autostart, tray and paths for Windows/macOS/Linux
 .github/workflows/   — CI builds for Windows/Linux/macOS
 renderer/widget.*    — desktop widget
 renderer/planner.*   — planner window
 renderer/quick.*     — quick-add mini window
 renderer/reminder.*  — reminder popup
-renderer/shared/     — theme, i18n, date/time pickers, quick-add parser
-mcp/gonow-mcp.js     — MCP server
+renderer/shared/     — theme, i18n, date/time pickers, sounds, quick-add parser
+mcp/src/             — MCP server in TypeScript (v2 SDK + Zod)
+mcp/gonow-mcp.js     — bundled CJS MCP server for clients
 scripts/             — asset generation, tests, smoke tests
 assets/source/       — icon and logo sources
 build/icon.ico       — installer icon
@@ -272,14 +241,8 @@ build/icon.ico       — installer icon
   the most reliable; some features may be unavailable on Wayland.
 - The AppImage requires `libfuse2`; without it run with `--appimage-extract-and-run`.
 - The Windows portable build keeps data in `%APPDATA%` (not next to the `.exe`).
-- The notification sound is a soft Web Audio chime, no external files.
-
-## Contributing
-
-Bugs and feature requests: [Issues](https://github.com/S3MPLAR/Go-Now/issues).
-Before a PR, see [DEVELOPMENT.md](DEVELOPMENT.md) and the
-[PR template](.github/pull_request_template.md). For security issues, follow
-[SECURITY.md](SECURITY.md).
+- The notification sound is one of 6 built-in Web Audio signals or up to 5
+  custom files up to 5 MB each.
 
 ## License
 

@@ -62,6 +62,16 @@ function readHwnd(win) {
   return handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0));
 }
 
+function nativeModule() {
+  if (process.platform !== 'win32') return null;
+  try {
+    return require('./win32');
+  } catch (err) {
+    console.error('[pin] native module unavailable:', err.message);
+    return null;
+  }
+}
+
 function runScript(scriptPath, expected) {
   return new Promise((resolve) => {
     execFile(
@@ -80,15 +90,7 @@ function runScript(scriptPath, expected) {
   });
 }
 
-function pinToDesktop(win) {
-  if (process.platform !== 'win32') return Promise.resolve(false);
-  let hwnd;
-  try {
-    hwnd = readHwnd(win);
-  } catch (err) {
-    console.error('[pin] cannot read hwnd:', err.message);
-    return Promise.resolve(false);
-  }
+function pinWithPowerShell(hwnd) {
   const scriptPath = path.join(app.getPath('userData'), 'pin-widget.ps1');
   try {
     fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
@@ -100,14 +102,7 @@ function pinToDesktop(win) {
   return runScript(scriptPath, 'OK');
 }
 
-function isPinnedToDesktop(win) {
-  if (process.platform !== 'win32') return Promise.resolve(false);
-  let hwnd;
-  try {
-    hwnd = readHwnd(win);
-  } catch (err) {
-    return Promise.resolve(false);
-  }
+function checkWithPowerShell(hwnd) {
   const scriptPath = path.join(app.getPath('userData'), 'pin-check.ps1');
   try {
     fs.writeFileSync(scriptPath, CHECK_SCRIPT.replace('__HWND__', hwnd.toString()), 'utf8');
@@ -117,4 +112,49 @@ function isPinnedToDesktop(win) {
   return runScript(scriptPath, 'YES');
 }
 
-module.exports = { pinToDesktop, isPinnedToDesktop };
+async function pinToDesktop(win) {
+  if (process.platform !== 'win32') return false;
+  let hwnd;
+  try {
+    hwnd = readHwnd(win);
+  } catch (err) {
+    console.error('[pin] cannot read hwnd:', err.message);
+    return false;
+  }
+  const native = nativeModule();
+  if (native) {
+    try {
+      const ok = native.pinToDesktopNative(hwnd, process.env.PP_PINMODE || 'framechanged');
+      if (ok) return true;
+      console.warn('[pin] native pin failed; falling back to powershell');
+    } catch (err) {
+      console.error('[pin] native pin error:', err.message);
+    }
+  }
+  return pinWithPowerShell(hwnd);
+}
+
+async function isPinnedToDesktop(win) {
+  if (process.platform !== 'win32') return false;
+  let hwnd;
+  try {
+    hwnd = readHwnd(win);
+  } catch (err) {
+    return false;
+  }
+  const native = nativeModule();
+  if (native) {
+    try {
+      return native.isPinnedToDesktopNative(hwnd);
+    } catch (err) {
+      console.error('[pin] native check error:', err.message);
+    }
+  }
+  return checkWithPowerShell(hwnd);
+}
+
+function backend() {
+  return nativeModule() ? 'native' : 'powershell';
+}
+
+module.exports = { pinToDesktop, isPinnedToDesktop, backend, readHwnd };

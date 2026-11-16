@@ -1,25 +1,22 @@
-# Go, Now! 2.0.0
+# Go, Now! 2.1.0
 
-Пиксельный планер задач с виджетом на рабочем столе. Первый публичный релиз:
-Windows, Linux и macOS.
+Пиксельный планер задач с виджетом на рабочем столе для Windows, Linux и macOS.
 
 ## Что нового
 
-- **Кроссплатформенность:** Windows 10/11, Linux (AppImage, deb) и macOS (dmg, zip, x64).
-- **Виджет на рабочем столе:** в Windows закрепляется за иконками (WorkerW); в macOS и Linux — плавающее окно с управлением из трея и режимом «Поверх окон».
-- **Планер:** день и неделя, поиск, фильтры, теги, важное, повторы, статистика, архив и отмена действий.
-- **Быстрое добавление:** `Ctrl+Alt+Space` с разбором «завтра», «в понедельник», времени, дат, тегов и `!`.
-- **Напоминания:** всплывающие уведомления, «Сделано» и «+10 мин».
-- **Локальные данные:** атомарная запись, резервные копии, восстановление, экспорт/импорт JSON, без телеметрии.
-- **MCP:** stdio-сервер для AI-ассистентов (opencode, Claude Desktop, Cursor, Cline и других).
-- **Шесть тем**, русский и английский интерфейс, свой логотип.
+- **Архив выполненных:** фильтр «АРХИВ», восстановление, удаление навсегда и автоархивация через 30/90 дней.
+- **Командная палитра:** `Ctrl+K` / `Cmd+K` для быстрого перехода к задачам, архиву, статистике, настройкам, экспорту, темам и языкам.
+- **Повторения:** ежедневно, еженедельно, ежемесячно, по будням и каждые N дней; интервалы распознаются в быстром добавлении.
+- **Звуки:** 6 встроенных сигналов и до 5 своих MP3/WAV/OGG/M4A; пиксельный ползунок громкости, отдельный звук для «Важного» и кастомных тегов. Встроенные сигналы громче на 30%.
+- **MCP v2:** TypeScript/Zod SDK, named pipe, новые инструменты `complete_task`, `snooze_task`, `get_stats`, `list_tags`, `archive_task`, `restore_task`.
+- **Безопасность и надёжность:** renderer sandbox, атомарное сохранение, валидация импорта, восстановление после сбоев, нативное закрепление виджета через Koffi.
 
 ## Установка
 
 ### Windows 10/11 (x64)
 
-- `gonow-2.0.0-setup.exe` — установщик для текущего пользователя, без прав администратора.
-- `gonow-2.0.0-portable.exe` — портативная версия.
+- `gonow-2.1.0-setup.exe` — установщик для текущего пользователя, без прав администратора.
+- `gonow-2.1.0-portable.exe` — портативная версия.
 
 ### Linux (x64)
 
@@ -45,15 +42,13 @@ Windows, Linux и macOS.
 
 ---
 
-# Go, Now! 2.0.0 (English)
+# Go, Now! 2.1.0 (English)
 
-A pixel-art task planner with a desktop widget. This is the first public release
-for Windows, Linux and macOS.
+A pixel-art task planner with a desktop widget for Windows, Linux and macOS.
 
-**Highlights:** cross-platform builds, desktop widget (WorkerW on Windows,
-floating window on macOS/Linux), day/week planner, quick add with natural-language
-parsing, reminders, local-only data with backups, MCP integration, six themes,
-Russian/English UI.
+**Highlights:** completed-task archive, command palette, monthly/weekday/every-N
+repeats, custom and per-tag notification sounds with volume control, MCP v2 with
+new tools, hardened storage/imports, renderer sandbox and native widget pinning.
 
 **Install:** download the asset for your platform above. Builds are unsigned; on
 first launch use SmartScreen “More info → Run anyway” or Gatekeeper right-click →

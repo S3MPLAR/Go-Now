@@ -1,17 +1,34 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell, dialog, globalShortcut, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell, dialog, globalShortcut, clipboard, session, powerMonitor, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const http = require('node:http');
+const net = require('node:net');
 const crypto = require('node:crypto');
+const { fileURLToPath } = require('node:url');
 const Store = require('./src/store');
-const { pinToDesktop, isPinnedToDesktop } = require('./src/pin');
+const { buildExport, parseImport } = require('./src/data-transfer');
+const { pinToDesktop, isPinnedToDesktop, backend: pinBackend } = require('./src/pin');
+const { resolveTaskSound } = require('./src/sound-routing');
 const platform = require('./src/platform');
 const { normalizeAccelerator, sameAccelerator, displayAccelerator } = require('./src/accelerators');
 
 const SMOKE = process.argv.includes('--smoke');
 const DEBUG = !app.isPackaged && process.env.PP_DEBUG === '1';
+const NO_LOCK = SMOKE || (!app.isPackaged && process.env.PP_NOLOCK === '1');
+if (!app.isPackaged && process.env.GONOW_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.GONOW_USER_DATA));
+}
 const DEFAULT_HOTKEY = 'Alt+Shift+Q';
 const DEFAULT_QUICK_HOTKEY = 'CommandOrControl+Alt+Space';
+const BUILTIN_SOUND_IDS = new Set(['soft', 'pixel', 'bell', 'pulse', 'chime', 'click']);
+const SOUND_TYPES = new Map([
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav'],
+  ['.ogg', 'audio/ogg'],
+  ['.m4a', 'audio/mp4']
+]);
+const SOUND_MAX_BYTES = 5 * 1024 * 1024;
+const MAX_CUSTOM_SOUNDS = 5;
+const DEFAULT_SOUND_VOLUME = 80;
 const QUICK_WIDTH = 620;
 const QUICK_HEIGHT = 190;
 const WIDGET_WIDTH = 320;
@@ -88,9 +105,23 @@ const MAIN_STRINGS = {
     quit: 'Выход',
     chooseLogoTitle: 'Выберите логотип',
     imagesFilter: 'Изображения',
+    chooseSoundTitle: 'Выберите звук',
+    audioFilter: 'Аудио',
+    removeSoundTitle: 'Удалить звук',
+    removeSoundConfirm: 'Удалить звук «{name}»?',
+    remove: 'Удалить',
+    missedTitle: 'Пропущено напоминаний: {count}',
+    missedMore: '…и ещё {count}',
+    fatalTitle: 'Критическая ошибка',
+    fatalDetail: 'Данные сохранены. Перезапустить приложение?',
+    fatalRestart: 'Перезапустить',
+    fatalQuit: 'Закрыть',
     exportTitle: 'Экспорт задач',
     importTitle: 'Импорт задач',
     importConfirm: 'Заменить текущий список задач данными из файла?',
+    importModeMessage: 'Заменить текущий список задач или добавить задачи из файла?',
+    importReplace: 'Заменить',
+    importMerge: 'Добавить',
     cancel: 'Отмена'
   },
   en: {
@@ -104,9 +135,23 @@ const MAIN_STRINGS = {
     quit: 'Quit',
     chooseLogoTitle: 'Choose a logo',
     imagesFilter: 'Images',
+    chooseSoundTitle: 'Choose a sound',
+    audioFilter: 'Audio',
+    removeSoundTitle: 'Delete sound',
+    removeSoundConfirm: 'Delete the sound "{name}"?',
+    remove: 'Delete',
+    missedTitle: 'Missed reminders: {count}',
+    missedMore: '…and {count} more',
+    fatalTitle: 'Fatal error',
+    fatalDetail: 'Your data was saved. Restart the app?',
+    fatalRestart: 'Restart',
+    fatalQuit: 'Quit',
     exportTitle: 'Export tasks',
     importTitle: 'Import tasks',
     importConfirm: 'Replace the current task list with the file contents?',
+    importModeMessage: 'Replace the current task list or add tasks from the file?',
+    importReplace: 'Replace',
+    importMerge: 'Merge',
     cancel: 'Cancel'
   }
 };
@@ -121,15 +166,27 @@ function currentLanguage() {
   return LANGUAGES.includes(language) ? language : 'ru';
 }
 
-function tr(key) {
+function tr(key, params) {
   const table = MAIN_STRINGS[currentLanguage()] || MAIN_STRINGS.ru;
-  return table[key] || MAIN_STRINGS.ru[key] || key;
+  let value = table[key] || MAIN_STRINGS.ru[key] || key;
+  if (params) {
+    for (const name of Object.keys(params)) {
+      value = value.replace(new RegExp(`\\{${name}\\}`, 'g'), String(params[name]));
+    }
+  }
+  return value;
 }
 
 function debugLog(message) {
   if (!DEBUG) return;
   try {
-    fs.appendFileSync(path.join(app.getPath('userData'), 'pp-debug.log'), `${new Date().toISOString()} ${message}\n`);
+    const file = path.join(app.getPath('userData'), 'pp-debug.log');
+    try {
+      if (fs.statSync(file).size > 256 * 1024) fs.renameSync(file, `${file}.old`);
+    } catch (statErr) {
+      // ignore missing file
+    }
+    fs.appendFileSync(file, `${new Date().toISOString()} ${message}\n`);
   } catch (err) {
     // ignore
   }
@@ -148,11 +205,70 @@ function captureWindow(win, filename) {
   }, 800);
 }
 
+let fatalHandled = false;
+const rendererCrashes = new Map();
+
+function shouldRecreateRenderer(tag) {
+  const now = Date.now();
+  const entry = rendererCrashes.get(tag) || { count: 0, at: now };
+  if (now - entry.at > 60000) {
+    entry.count = 0;
+    entry.at = now;
+  }
+  entry.count += 1;
+  rendererCrashes.set(tag, entry);
+  return entry.count <= 3;
+}
+
+function handleFatal(err, source) {
+  const message = err && err.stack ? err.stack : String(err);
+  debugLog(`${source}: ${message}`);
+  console.error(`[${source}]`, err);
+  if (fatalHandled) return;
+  fatalHandled = true;
+  try {
+    if (store) store.saveNow();
+  } catch (saveErr) {
+    debugLog(`fatal save failed: ${saveErr.message}`);
+  }
+  if (SMOKE || !app.isReady()) {
+    setTimeout(() => app.exit(1), 50);
+    return;
+  }
+  try {
+    const choice = dialog.showMessageBoxSync({
+      type: 'error',
+      title: 'Go, Now!',
+      message: tr('fatalTitle'),
+      detail: tr('fatalDetail'),
+      buttons: [tr('fatalRestart'), tr('fatalQuit')],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    });
+    if (choice === 0) {
+      app.relaunch();
+      app.exit(0);
+    } else {
+      app.exit(1);
+    }
+  } catch (dialogErr) {
+    debugLog(`fatal dialog failed: ${dialogErr.message}`);
+    app.exit(1);
+  }
+}
+
 process.on('uncaughtException', (err) => {
-  debugLog(`uncaughtException: ${err && err.stack ? err.stack : err}`);
+  handleFatal(err, 'uncaughtException');
 });
 process.on('unhandledRejection', (err) => {
   debugLog(`unhandledRejection: ${err && err.stack ? err.stack : err}`);
+  console.error('[unhandledRejection]', err);
+  try {
+    if (store) store.saveNow();
+  } catch (saveErr) {
+    debugLog(`rejection save failed: ${saveErr.message}`);
+  }
 });
 
 let store = null;
@@ -172,16 +288,17 @@ let pendingResizeSize = null;
 let reminderBusyId = null;
 let reminderHideTimer = null;
 let bridgeServer = null;
+let bridgeEndpointPath = null;
 let hotkeyRegistered = false;
 const reminderQueue = [];
 
 if (process.platform === 'win32') app.setAppUserModelId('com.gonow.app');
 
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = NO_LOCK || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => openPlanner());
+  if (!NO_LOCK) app.on('second-instance', () => openPlanner());
   app.whenReady().then(init).catch((err) => {
     debugLog(`init failed: ${err && err.stack ? err.stack : err}`);
     setTimeout(() => app.exit(1), 50);
@@ -208,8 +325,48 @@ app.on('before-quit', () => {
   }
 });
 
+function isAppFileUrl(rawUrl) {
+  try {
+    const target = path.resolve(fileURLToPath(new URL(rawUrl)));
+    const root = path.resolve(__dirname);
+    const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+    if (process.platform === 'win32') {
+      const lowerTarget = target.toLowerCase();
+      return lowerTarget === root.toLowerCase() || lowerTarget.startsWith(prefix.toLowerCase());
+    }
+    return target === root || target.startsWith(prefix);
+  } catch (err) {
+    return false;
+  }
+}
+
+function applySecurityPolicy() {
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.on('will-navigate', (event, url) => {
+      if (!isAppFileUrl(url)) event.preventDefault();
+    });
+    contents.on('will-redirect', (event, url) => {
+      if (!isAppFileUrl(url)) event.preventDefault();
+    });
+    contents.on('will-attach-webview', (event) => {
+      event.preventDefault();
+    });
+  });
+  try {
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
+    if (typeof session.defaultSession.setDevicePermissionHandler === 'function') {
+      session.defaultSession.setDevicePermissionHandler(() => false);
+    }
+  } catch (err) {
+    debugLog(`security policy failed: ${err.message}`);
+  }
+}
+
 function init() {
   debugLog(`init userData=${app.getPath('userData')}`);
+  applySecurityPolicy();
   const storeLock = acquireStoreLock();
   try {
     backupStore();
@@ -225,8 +382,8 @@ function init() {
     }
     const cleanupDays = Number(store.getSettings().autoCleanupDone);
     if (cleanupDays > 0) {
-      const removed = store.cleanupDone(cleanupDays);
-      if (removed) debugLog(`auto cleanup removed ${removed} done tasks`);
+      const archived = store.archiveDone(cleanupDays);
+      if (archived) debugLog(`auto archive moved ${archived} done tasks`);
     }
     try {
       const mcpPath = platform.stableMcpPath();
@@ -260,9 +417,14 @@ function init() {
   }
   if (!SMOKE) {
     startWidgetWatchdog();
-    screen.on('display-metrics-changed', ensureWidgetOnScreen);
-    screen.on('display-added', ensureWidgetOnScreen);
-    screen.on('display-removed', ensureWidgetOnScreen);
+    const onDisplayChange = () => {
+      ensureWidgetOnScreen();
+      ensureWidgetPinned();
+    };
+    screen.on('display-metrics-changed', onDisplayChange);
+    screen.on('display-added', onDisplayChange);
+    screen.on('display-removed', onDisplayChange);
+    powerMonitor.on('resume', ensureWidgetPinned);
   }
   if (SMOKE) {
     setTimeout(() => {
@@ -275,6 +437,51 @@ function init() {
     }, 25000);
   } else {
     startReminderLoop();
+    if (DEBUG && process.env.PP_CRASHTEST === '1') {
+      setTimeout(() => {
+        if (plannerWin && !plannerWin.isDestroyed()) {
+          debugLog('crashtest: crashing planner renderer');
+          plannerWin.webContents.forcefullyCrashRenderer();
+        }
+      }, 3000);
+      setTimeout(() => {
+        debugLog(`crashtest planner=${!!plannerWin} destroyed=${plannerWin ? plannerWin.isDestroyed() : 'null'}`);
+      }, 6000);
+    }
+    if (DEBUG && process.env.PP_PINTEST === '1') {
+      setTimeout(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        try {
+          await waitForWidgetLoad(widgetWin);
+          await wait(600);
+          debugLog(`pintest initial visible=${!!(widgetWin && widgetWin.isVisible())} pinned=${widgetPinned}`);
+          hideWidget();
+          await wait(300);
+          debugLog(`pintest hidden visible=${!!(widgetWin && widgetWin.isVisible())} pinned=${widgetPinned}`);
+          const hiddenUi = await plannerWin.webContents.executeJavaScript(`(() => {
+            const button = document.getElementById('pinBtn');
+            return { text: button.textContent.trim(), disabled: button.disabled, hint: document.getElementById('pinHint').textContent.trim() };
+          })()`);
+          debugLog(`pintest hidden ui=${JSON.stringify(hiddenUi)}`);
+          const repinned = await pinWidget();
+          await wait(300);
+          debugLog(`pintest repin ok=${repinned} visible=${!!(widgetWin && widgetWin.isVisible())} pinned=${widgetPinned}`);
+          const pinnedUi = await plannerWin.webContents.executeJavaScript(`(() => {
+            const button = document.getElementById('pinBtn');
+            return { text: button.textContent.trim(), disabled: button.disabled };
+          })()`);
+          debugLog(`pintest pinned ui=${JSON.stringify(pinnedUi)}`);
+          if (widgetWin && !widgetWin.isDestroyed()) widgetWin.close();
+          await wait(2200);
+          debugLog(`pintest recreated exists=${!!widgetWin} visible=${!!(widgetWin && widgetWin.isVisible())} pinned=${widgetPinned}`);
+          const recreated = await pinWidget();
+          await wait(300);
+          debugLog(`pintest repin2 ok=${recreated} visible=${!!(widgetWin && widgetWin.isVisible())} pinned=${widgetPinned}`);
+        } catch (err) {
+          debugLog(`pintest error: ${err.message}`);
+        }
+      }, 2500);
+    }
     if (DEBUG && process.env.PP_QUICKTEST === '1') {
       setTimeout(() => {
         showQuickAdd();
@@ -307,7 +514,7 @@ function init() {
           const exported = exportTasksTo(file);
           const imported = importTasksFrom(file);
           fs.unlinkSync(file);
-          debugLog(`datatest before=${before} exported=${exported} imported=${imported}`);
+          debugLog(`datatest before=${before} exported=${exported} imported=${imported.count} skipped=${imported.skipped}`);
         } catch (err) {
           debugLog(`datatest error: ${err.message}`);
         }
@@ -377,7 +584,7 @@ function createWidget() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   });
@@ -397,6 +604,8 @@ function createWidget() {
     captureWindow(widgetWin, 'shot-widget.png');
     if (!SMOKE) {
       widgetWin.showInactive();
+      refreshTrayMenu();
+      broadcastWidgetState();
       if (platform.isWindows && process.env.PP_NOPIN !== '1') setTimeout(() => pinWidget(), 400);
     }
   });
@@ -810,6 +1019,42 @@ function createWidget() {
     }, 3500);
   }
 
+  if (DEBUG && process.env.PP_REMINDERTEST === '1') {
+    setTimeout(async () => {
+      const now = new Date();
+      const pad = (value) => String(value).padStart(2, '0');
+      const fake = {
+        id: 'debug-reminder-test',
+        title: 'Проверка отложенного напоминания',
+        date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+        time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+        note: '',
+        recurrence: 'none'
+      };
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const clickSnooze = () => {
+        if (!reminderWin || reminderWin.isDestroyed()) return Promise.resolve();
+        return reminderWin.webContents.executeJavaScript("document.getElementById('btnSnooze').click()");
+      };
+      try {
+        showReminder(fake);
+        await wait(1200);
+        await clickSnooze();
+        await wait(800);
+        debugLog(`remindertest after first snooze visible=${reminderWin ? reminderWin.isVisible() : 'none'}`);
+        showReminder(fake);
+        await wait(900);
+        await clickSnooze();
+        await wait(800);
+        debugLog(`remindertest after same-id snooze visible=${reminderWin ? reminderWin.isVisible() : 'none'}`);
+      } catch (err) {
+        debugLog(`remindertest error: ${err.message}`);
+      } finally {
+        if (reminderWin && reminderWin.isVisible()) handleReminderAction('snooze');
+      }
+    }, 3500);
+  }
+
   if (DEBUG && process.env.PP_SHOT_AT) {
     const shotAt = Number(process.env.PP_SHOT_AT);
     if (Number.isFinite(shotAt) && shotAt > 0) {
@@ -831,12 +1076,22 @@ function createWidget() {
   widgetWin.on('closed', () => {
     widgetWin = null;
     widgetPinned = false;
+    refreshTrayMenu();
+    broadcastWidgetState();
     if (!quitting && !SMOKE) {
       debugLog('widget closed unexpectedly, recreating');
       setTimeout(() => {
         if (!quitting && !widgetWin) createWidget();
       }, 1500);
     }
+  });
+  widgetWin.on('show', () => {
+    refreshTrayMenu();
+    broadcastWidgetState();
+  });
+  widgetWin.on('hide', () => {
+    refreshTrayMenu();
+    broadcastWidgetState();
   });
   logConsole(widgetWin, 'widget');
 }
@@ -863,7 +1118,7 @@ function openPlanner() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   });
@@ -882,6 +1137,148 @@ function openPlanner() {
           plannerWin.webContents.executeJavaScript("document.getElementById('settingsToggle').click()");
         }
       }, 700);
+    }
+    if (DEBUG && process.env.PP_SOUNDTEST === '1') {
+      setTimeout(async () => {
+        if (!plannerWin || plannerWin.isDestroyed()) return;
+        const original = store.getSettings().notificationSound;
+        const originalTagSounds = { ...(store.getSettings().notificationTagSounds || {}) };
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const run = (script) => plannerWin.webContents.executeJavaScript(script);
+        try {
+          await run(`(() => {
+            document.getElementById('settingsToggle').click();
+            document.getElementById('soundSelectBtn').scrollIntoView({ block: 'center' });
+            return true;
+          })()`);
+          await wait(800);
+          for (const id of ['soft', 'pixel', 'bell', 'pulse', 'chime', 'click']) {
+            await run(`(() => {
+              document.getElementById('soundSelectBtn').click();
+              const choice = document.querySelector('.pp-choice[data-value="${id}"]');
+              if (choice) choice.click();
+              return true;
+            })()`);
+            await wait(500);
+            debugLog(`soundtest ${id} store=${store.getSettings().notificationSound}`);
+          }
+          const custom = customSoundList();
+          if (custom.length) {
+            await run(`(() => {
+              document.getElementById('soundSelectBtn').click();
+              const choice = Array.from(document.querySelectorAll('.pp-choice')).find((button) => button.dataset.value.startsWith('custom-'));
+              if (choice) choice.click();
+              return true;
+            })()`);
+            await wait(900);
+            debugLog(`soundtest custom store=${store.getSettings().notificationSound}`);
+          }
+          const active = await run(`document.getElementById('soundSelectLabel').textContent.trim()`);
+          debugLog(`soundtest active=${active}`);
+          const volumeChecks = [];
+          for (const value of [0, 50, 100]) {
+            const state = await run(`(() => {
+              const input = document.getElementById('soundVolume');
+              input.value = '${value}';
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              return {
+                value: input.value,
+                label: document.getElementById('soundVolumeValue').textContent,
+                fill: input.style.getPropertyValue('--sound-volume')
+              };
+            })()`);
+            volumeChecks.push(state);
+          }
+          debugLog(`soundtest volume=${JSON.stringify(volumeChecks)}`);
+          const tags = [...new Set(store.listTasks().flatMap((task) => task.tags || []))];
+          const tagKey = tags.length
+            ? `tag:${String(tags[0]).trim().toLowerCase().replace(/\s+/g, ' ')}`
+            : 'important';
+          await run(`document.getElementById('tagSoundSave').scrollIntoView({ block: 'center' })`);
+          await wait(300);
+          await run(`(() => {
+            document.getElementById('tagSoundTagBtn').click();
+            const tagChoice = document.querySelector('.pp-choice[data-value=${JSON.stringify(tagKey)}]');
+            if (tagChoice) tagChoice.click();
+            document.getElementById('tagSoundSoundBtn').click();
+            const soundChoice = document.querySelector('.pp-choice[data-value="pulse"]');
+            if (soundChoice) soundChoice.click();
+            document.getElementById('tagSoundSave').click();
+            return true;
+          })()`);
+          await wait(800);
+          debugLog(`soundtest tag=${tagKey} store=${JSON.stringify(store.getSettings().notificationTagSounds)}`);
+          const tagRows = await run(`document.querySelectorAll('.tag-sound-item').length`);
+          debugLog(`soundtest tagrows=${tagRows}`);
+          if (process.env.PP_SCREENSHOT === '1') {
+            await run(`document.getElementById('soundSelectBtn').scrollIntoView({ block: 'center' })`);
+            await wait(900);
+            captureWindow(plannerWin, 'shot-sound.png');
+            await wait(1000);
+            await run(`document.getElementById('tagSoundSave').scrollIntoView({ block: 'center' })`);
+            await wait(300);
+            captureWindow(plannerWin, 'shot-tag-sound.png');
+            await wait(1000);
+            await run(`document.getElementById('soundSelectBtn').click()`);
+            await wait(300);
+            captureWindow(plannerWin, 'shot-sound-menu.png');
+            await wait(1200);
+            await run(`window.ppPicker.close()`);
+          }
+          await wait(300);
+          await run(`(() => {
+            const remove = document.querySelector('.tag-sound-remove');
+            if (remove) remove.click();
+            return true;
+          })()`);
+          await wait(500);
+          debugLog(`soundtest tagremoved=${JSON.stringify(store.getSettings().notificationTagSounds)}`);
+          await wait(1000);
+        } catch (err) {
+          debugLog(`sound test error: ${err.message}`);
+        } finally {
+          store.setSettings({ notificationSound: original, notificationTagSounds: originalTagSounds });
+        }
+      }, 3500);
+    }
+    if (DEBUG && process.env.PP_VOLUMETEST === '1') {
+      setTimeout(async () => {
+        if (!plannerWin || plannerWin.isDestroyed()) return;
+        const original = store.getSettings().notificationVolume;
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const run = (script) => plannerWin.webContents.executeJavaScript(script);
+        try {
+          await run(`(() => {
+            document.getElementById('settingsToggle').click();
+            document.getElementById('soundVolume').scrollIntoView({ block: 'center' });
+            return true;
+          })()`);
+          await wait(800);
+          const rect = await run(`(() => {
+            const box = document.getElementById('soundVolume').getBoundingClientRect();
+            return { x: box.x, y: box.y, width: box.width, height: box.height };
+          })()`);
+          const clickAt = async (ratio) => {
+            const x = Math.round(rect.x + rect.width * ratio);
+            const y = Math.round(rect.y + rect.height / 2);
+            plannerWin.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+            plannerWin.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+            plannerWin.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+            await wait(250);
+            return run(`(() => ({
+              value: document.getElementById('soundVolume').value,
+              label: document.getElementById('soundVolumeValue').textContent,
+              fill: document.getElementById('soundVolume').style.getPropertyValue('--sound-volume')
+            }))()`);
+          };
+          debugLog(`volumetest max=${JSON.stringify(await clickAt(1))}`);
+          debugLog(`volumetest min=${JSON.stringify(await clickAt(0))}`);
+        } catch (err) {
+          debugLog(`volumetest error: ${err.message}`);
+        } finally {
+          store.setSettings({ notificationVolume: original });
+        }
+      }, 3000);
     }
     if (DEBUG && process.env.PP_SEARCHTEST === '1') {
       setTimeout(() => {
@@ -1033,7 +1430,7 @@ function createQuickWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false
     }
   });
@@ -1193,17 +1590,49 @@ function logBridge(line) {
   }
 }
 
+function bridgeEndpoint() {
+  if (process.platform === 'win32') {
+    const hash = crypto.createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 16);
+    return `\\\\.\\pipe\\gonow-${hash}`;
+  }
+  const socketPath = path.join(app.getPath('userData'), 'gonow.sock');
+  if (Buffer.byteLength(socketPath) <= 100) return socketPath;
+  const hash = crypto.createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 16);
+  return path.join(app.getPath('temp'), `gonow-${hash}.sock`);
+}
+
 function startBridge() {
   if (SMOKE) return;
   try {
     const token = crypto.randomBytes(16).toString('hex');
-    bridgeServer = http.createServer((req, res) => handleBridgeRequest(req, res, token));
-    bridgeServer.on('error', (err) => debugLog(`bridge error: ${err.message}`));
-    bridgeServer.listen(0, '127.0.0.1', () => {
-      const port = bridgeServer.address().port;
-      fs.writeFileSync(bridgeFilePath(), JSON.stringify({ port, token, pid: process.pid }), 'utf8');
-      debugLog(`bridge listening on 127.0.0.1:${port}`);
-      logBridge(`listening on 127.0.0.1:${port}`);
+    bridgeEndpointPath = bridgeEndpoint();
+    if (process.platform !== 'win32') {
+      try {
+        fs.unlinkSync(bridgeEndpointPath);
+      } catch (err) {
+        // ignore stale socket
+      }
+    }
+    bridgeServer = net.createServer((socket) => handleBridgeConnection(socket, token));
+    bridgeServer.on('error', (err) => {
+      debugLog(`bridge error: ${err.message}`);
+      logBridge(`error ${err.message}`);
+    });
+    bridgeServer.listen(bridgeEndpointPath, () => {
+      if (process.platform !== 'win32') {
+        try {
+          fs.chmodSync(bridgeEndpointPath, 0o600);
+        } catch (err) {
+          debugLog(`bridge chmod failed: ${err.message}`);
+        }
+      }
+      fs.writeFileSync(
+        bridgeFilePath(),
+        JSON.stringify({ transport: 'pipe', path: bridgeEndpointPath, token, pid: process.pid }),
+        { encoding: 'utf8', mode: 0o600 }
+      );
+      debugLog(`bridge listening on ${bridgeEndpointPath}`);
+      logBridge(`listening on ${bridgeEndpointPath}`);
     });
   } catch (err) {
     debugLog(`bridge start failed: ${err.message}`);
@@ -1218,6 +1647,14 @@ function stopBridge() {
     // ignore
   }
   bridgeServer = null;
+  if (process.platform !== 'win32' && bridgeEndpointPath) {
+    try {
+      fs.unlinkSync(bridgeEndpointPath);
+    } catch (err) {
+      // ignore
+    }
+  }
+  bridgeEndpointPath = null;
   logBridge('stopped');
   try {
     fs.unlinkSync(bridgeFilePath());
@@ -1226,151 +1663,205 @@ function stopBridge() {
   }
 }
 
-function handleBridgeRequest(req, res, token) {
-  const startedAt = Date.now();
-  let logged = false;
-  const send = (status, body) => {
-    if (!logged) {
-      logged = true;
-      logBridge(`${req.method} ${req.url} ${status} ${Date.now() - startedAt}ms`);
-    }
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(body));
-  };
-  if (req.headers.authorization !== `Bearer ${token}`) {
-    send(401, { error: 'unauthorized' });
-    return;
-  }
+function routeBridgeRequest(method, rawPath, body) {
   let url;
   try {
-    url = new URL(req.url, 'http://127.0.0.1');
+    url = new URL(rawPath, 'http://local');
   } catch (err) {
-    send(400, { error: 'bad url' });
-    return;
+    return { status: 400, body: { error: 'bad url' } };
   }
   const parts = url.pathname.split('/').filter(Boolean);
-  const readBody = (callback) => {
-    let data = '';
-    req.on('data', (chunk) => {
-      data += chunk;
-      if (data.length > 1e6) req.destroy();
-    });
-    req.on('end', () => {
-      if (!data) {
-        callback({});
-        return;
-      }
-      try {
-        callback(JSON.parse(data));
-      } catch (err) {
-        send(400, { error: 'invalid json' });
-      }
-    });
-  };
 
-  if (parts[0] === 'health' && parts.length === 1 && req.method === 'GET') {
-    send(200, {
-      ok: true,
-      pid: process.pid,
-      version: app.getVersion(),
-      uptime: Math.round(process.uptime()),
-      tasks: store.listTasks().length
-    });
-    return;
+  if (parts[0] === 'health' && parts.length === 1 && method === 'GET') {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        pid: process.pid,
+        version: app.getVersion(),
+        uptime: Math.round(process.uptime()),
+        tasks: store.listTasks().length
+      }
+    };
   }
 
-  if (parts[0] === 'tasks' && parts.length === 1 && req.method === 'GET') {
+  if (parts[0] === 'tasks' && parts.length === 1 && method === 'GET') {
     const date = url.searchParams.get('date');
-    const all = store.listTasks();
-    send(200, { tasks: date ? all.filter((task) => task.date === date) : all });
-    return;
+    const archivedOnly = url.searchParams.get('archived') === '1';
+    const includeArchived = url.searchParams.get('include_archived') === '1';
+    const all = archivedOnly ? store.listArchived() : store.listTasks({ includeArchived });
+    return { status: 200, body: { tasks: date ? all.filter((task) => task.date === date) : all } };
   }
 
-  if (parts[0] === 'tasks' && parts.length === 1 && req.method === 'POST') {
-    readBody((body) => {
-      try {
-        const task = store.addTask(body || {});
-        broadcastChange();
-        setTimeout(scanReminders, 200);
-        send(200, { task });
-      } catch (err) {
-        send(400, { error: err.message });
-      }
-    });
-    return;
+  if (parts[0] === 'tasks' && parts[1] === 'archived' && parts.length === 2 && method === 'GET') {
+    return { status: 200, body: { tasks: store.listArchived() } };
   }
 
-  if (parts[0] === 'tasks' && parts[1] === 'bulk' && parts.length === 2 && req.method === 'POST') {
-    readBody((body) => {
-      try {
-        const items = body && Array.isArray(body.tasks) ? body.tasks : [];
-        if (!items.length) {
-          send(400, { error: 'tasks required' });
-          return;
-        }
-        const tasks = items.map((item) => store.addTask(item || {}));
-        broadcastChange();
-        setTimeout(scanReminders, 200);
-        send(200, { tasks });
-      } catch (err) {
-        send(400, { error: err.message });
-      }
-    });
-    return;
+  if (parts[0] === 'tasks' && parts[1] === 'archived' && parts.length === 2 && method === 'DELETE') {
+    const olderThan = Number(url.searchParams.get('older_than') || 0);
+    const removed = store.purgeArchived(olderThan);
+    if (removed) broadcastChange();
+    return { status: 200, body: { removed } };
+  }
+
+  if (parts[0] === 'tasks' && parts[1] === 'archive-done' && parts.length === 2 && method === 'POST') {
+    const days = body && body.days != null ? Number(body.days) : 0;
+    const archived = store.archiveDone(days);
+    if (archived) broadcastChange();
+    return { status: 200, body: { archived } };
+  }
+
+  if (parts[0] === 'tasks' && parts.length === 1 && method === 'POST') {
+    try {
+      const task = store.addTask(body || {});
+      broadcastChange();
+      setTimeout(scanReminders, 200);
+      return { status: 200, body: { task } };
+    } catch (err) {
+      return { status: 400, body: { error: err.message } };
+    }
+  }
+
+  if (parts[0] === 'tasks' && parts[1] === 'bulk' && parts.length === 2 && method === 'POST') {
+    const items = body && Array.isArray(body.tasks) ? body.tasks : [];
+    if (!items.length) return { status: 400, body: { error: 'tasks required' } };
+    try {
+      const tasks = items.map((item) => store.addTask(item || {}));
+      broadcastChange();
+      setTimeout(scanReminders, 200);
+      return { status: 200, body: { tasks } };
+    } catch (err) {
+      return { status: 400, body: { error: err.message } };
+    }
+  }
+
+  if (parts[0] === 'tasks' && parts.length === 3 && (parts[2] === 'archive' || parts[2] === 'unarchive') && method === 'POST') {
+    const id = decodeURIComponent(parts[1]);
+    if (!store.getTask(id)) return { status: 404, body: { error: 'not found' } };
+    const task = parts[2] === 'archive' ? store.archiveTask(id) : store.unarchiveTask(id);
+    broadcastChange();
+    return { status: 200, body: { task } };
+  }
+
+  if (parts[0] === 'tasks' && parts.length === 3 && parts[2] === 'snooze' && method === 'POST') {
+    const id = decodeURIComponent(parts[1]);
+    const task = store.getTask(id);
+    if (!task) return { status: 404, body: { error: 'not found' } };
+    const requested = body && body.minutes != null ? Number(body.minutes) : 10;
+    const minutes = Number.isFinite(requested) ? Math.min(1440, Math.max(1, Math.round(requested))) : 10;
+    store.snooze(id, minutes * 60 * 1000);
+    broadcastChange();
+    return { status: 200, body: { task } };
   }
 
   if (parts[0] === 'tasks' && parts.length === 2) {
     const id = decodeURIComponent(parts[1]);
-    if (req.method === 'GET') {
+    if (method === 'GET') {
       const task = store.getTask(id);
-      if (task) send(200, { task });
-      else send(404, { error: 'not found' });
-      return;
+      return task ? { status: 200, body: { task } } : { status: 404, body: { error: 'not found' } };
     }
-    if (req.method === 'PATCH') {
-      readBody((body) => {
-        let task = store.updateTask(id, body || {});
-        if (!task) {
-          send(404, { error: 'not found' });
-          return;
-        }
-        if (body && body.done !== undefined) task = store.setDone(id, !!body.done) || task;
-        broadcastChange();
-        setTimeout(scanReminders, 200);
-        send(200, { task });
-      });
-      return;
+    if (method === 'PATCH') {
+      if (body && body.archived !== undefined) {
+        if (!store.getTask(id)) return { status: 404, body: { error: 'not found' } };
+        if (body.archived) store.archiveTask(id);
+        else store.unarchiveTask(id);
+      }
+      let task = store.updateTask(id, body || {});
+      if (!task) return { status: 404, body: { error: 'not found' } };
+      if (body && body.done !== undefined) task = store.setDone(id, !!body.done) || task;
+      broadcastChange();
+      setTimeout(scanReminders, 200);
+      return { status: 200, body: { task } };
     }
-    if (req.method === 'DELETE') {
+    if (method === 'DELETE') {
+      if (!store.getTask(id)) return { status: 404, body: { error: 'not found' } };
       store.removeTask(id);
       broadcastChange();
-      send(200, { ok: true });
-      return;
+      return { status: 200, body: { ok: true } };
     }
   }
 
-  send(404, { error: 'not found' });
+  return { status: 404, body: { error: 'not found' } };
+}
+
+function handleBridgeConnection(socket, token) {
+  socket.setEncoding('utf8');
+  socket.setTimeout(30000, () => socket.destroy());
+  let buffer = '';
+  socket.on('data', (chunk) => {
+    buffer += chunk;
+    if (buffer.length > 1e6) {
+      socket.destroy();
+      return;
+    }
+    let index = buffer.indexOf('\n');
+    while (index !== -1) {
+      const line = buffer.slice(0, index).trim();
+      buffer = buffer.slice(index + 1);
+      if (line) {
+        const startedAt = Date.now();
+        let message = null;
+        try {
+          message = JSON.parse(line);
+        } catch (err) {
+          message = null;
+        }
+        let result;
+        if (!message || message.token !== token) {
+          result = { status: 401, body: { error: 'unauthorized' } };
+        } else {
+          const method = String(message.method || 'GET').toUpperCase();
+          const requestPath = String(message.path || '/');
+          result = routeBridgeRequest(method, requestPath, message.body);
+          logBridge(`${method} ${requestPath} ${result.status} ${Date.now() - startedAt}ms`);
+        }
+        const response = {
+          id: message && message.id != null ? message.id : null,
+          status: result.status,
+          body: result.body
+        };
+        try {
+          socket.write(`${JSON.stringify(response)}\n`);
+        } catch (err) {
+          // ignore closed socket
+        }
+      }
+      index = buffer.indexOf('\n');
+    }
+  });
+  socket.on('error', () => {
+    // ignore
+  });
 }
 
 function exportTasksTo(filePath) {
-  const payload = {
-    app: 'Go, Now!',
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    tasks: store.listTasks()
-  };
+  const payload = buildExport(store.listTasks({ includeArchived: true }), { schemaVersion: Store.SCHEMA_VERSION });
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
   return payload.tasks.length;
 }
 
-function importTasksFrom(filePath) {
-  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  const tasks = Array.isArray(parsed) ? parsed : parsed && parsed.tasks;
-  if (!Array.isArray(tasks)) throw new Error('invalid file');
-  const count = store.replaceTasks(tasks);
+function snapshotStore(reason) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const file = path.join(dir, `pre-${reason}-${stamp}.json`);
+    fs.writeFileSync(file, JSON.stringify(store.data, null, 2), 'utf8');
+    return file;
+  } catch (err) {
+    debugLog(`snapshot ${reason} failed: ${err.message}`);
+    return null;
+  }
+}
+
+function importTasksFrom(filePath, mode = 'replace') {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const parsed = parseImport(raw);
+  snapshotStore('import');
+  const count = mode === 'merge' ? store.mergeTasks(parsed.tasks) : store.replaceTasks(parsed.tasks);
   store.saveNow();
   broadcastChange();
-  return count;
+  return { count, mode, skipped: parsed.skipped, meta: parsed.meta };
 }
 
 function showPlannerDialog(method, options) {
@@ -1463,35 +1954,92 @@ function ensureWidgetOnScreen() {
   }
 }
 
+let pinCheckBusy = false;
+
+function ensureWidgetPinned() {
+  if (pinCheckBusy || !widgetWin || widgetWin.isDestroyed() || quitting) return;
+  pinCheckBusy = true;
+  isPinnedToDesktop(widgetWin)
+    .then((pinned) => {
+      if (!pinned && widgetWin && !widgetWin.isDestroyed() && !quitting) {
+        debugLog('watchdog: widget lost pin, re-pinning');
+        return pinWidget();
+      }
+      return null;
+    })
+    .catch(() => {})
+    .finally(() => {
+      pinCheckBusy = false;
+    });
+}
+
 function startWidgetWatchdog() {
   if (SMOKE || process.platform !== 'win32') return;
-  const intervalMs = Number(process.env.PP_WATCHDOG_MS || 60000);
-  setInterval(() => {
-    if (!widgetWin || widgetWin.isDestroyed()) return;
-    isPinnedToDesktop(widgetWin)
-      .then((pinned) => {
-        if (!pinned && widgetWin && !widgetWin.isDestroyed() && !quitting) {
-          debugLog('watchdog: widget lost pin, re-pinning');
-          pinWidget();
-        }
-      })
-      .catch(() => {});
-  }, intervalMs);
+  const intervalMs = Number(process.env.PP_WATCHDOG_MS || 300000);
+  setInterval(ensureWidgetPinned, intervalMs);
 }
 
 async function pinWidget() {
-  if (!widgetWin || SMOKE || process.platform !== 'win32') {
-    debugLog(`pin skipped win=${!!widgetWin} smoke=${SMOKE} platform=${process.platform}`);
+  if (SMOKE || process.platform !== 'win32') {
+    debugLog(`pin skipped smoke=${SMOKE} platform=${process.platform}`);
     return false;
   }
-  debugLog('pin start');
+  const win = ensureWidgetWindow();
+  if (!win) return false;
+  debugLog(`pin start backend=${pinBackend()}`);
+  await waitForWidgetLoad(win);
+  if (!widgetWin || widgetWin.isDestroyed()) return false;
+  if (!widgetWin.isVisible()) widgetWin.showInactive();
   const ok = await pinToDesktop(widgetWin);
   debugLog(`pin result=${ok}`);
   widgetPinned = ok;
   if (ok) console.log('[pin] widget pinned to desktop');
   else console.warn('[pin] widget stays as a regular window');
   refreshTrayMenu();
+  broadcastWidgetState();
   return ok;
+}
+
+function ensureWidgetWindow() {
+  if (widgetWin && !widgetWin.isDestroyed()) return widgetWin;
+  if (SMOKE) return null;
+  createWidget();
+  return widgetWin && !widgetWin.isDestroyed() ? widgetWin : null;
+}
+
+function waitForWidgetLoad(win) {
+  if (!win || win.isDestroyed() || !win.webContents.isLoading()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, 5000);
+    win.webContents.once('did-finish-load', finish);
+    win.webContents.once('did-fail-load', finish);
+  });
+}
+
+async function showWidget() {
+  const win = ensureWidgetWindow();
+  if (!win) return false;
+  await waitForWidgetLoad(win);
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMinimized()) win.restore();
+  win.showInactive();
+  refreshTrayMenu();
+  broadcastWidgetState();
+  return true;
+}
+
+function hideWidget() {
+  if (!widgetWin || widgetWin.isDestroyed()) return;
+  widgetWin.hide();
+  refreshTrayMenu();
+  broadcastWidgetState();
 }
 
 function applyWidgetOnTop(enabled) {
@@ -1539,10 +2087,8 @@ function refreshTrayMenu() {
     {
       label: widgetWin && widgetWin.isVisible() ? tr('hideWidget') : tr('showWidget'),
       click: () => {
-        if (!widgetWin) return;
-        if (widgetWin.isVisible()) widgetWin.hide();
-        else widgetWin.showInactive();
-        refreshTrayMenu();
+        if (widgetWin && !widgetWin.isDestroyed() && widgetWin.isVisible()) hideWidget();
+        else showWidget();
       }
     },
     ...(platform.isWindows ? [{
@@ -1581,7 +2127,39 @@ function applyAutostart(enabled) {
 
 function startReminderLoop() {
   setTimeout(scanReminders, 3000);
+  setTimeout(showMissedDigest, 6000);
   setInterval(scanReminders, 20000);
+  powerMonitor.on('resume', () => {
+    debugLog('power resume: rescan reminders');
+    scanReminders();
+    showMissedDigest();
+  });
+  powerMonitor.on('unlock-screen', () => {
+    debugLog('unlock-screen: rescan reminders');
+    scanReminders();
+  });
+}
+
+function showMissedDigest() {
+  if (!store) return;
+  const missed = store.missedTasks(Date.now(), 7);
+  if (!missed.length) return;
+  if (typeof Notification === 'undefined' || !Notification.isSupported()) return;
+  for (const task of missed) store.markNotified(task.id);
+  store.saveNow();
+  const titles = missed.slice(0, 3).map((task) => task.title);
+  const body = missed.length > 3
+    ? `${titles.join(', ')} ${tr('missedMore', { count: missed.length - 3 })}`
+    : titles.join(', ');
+  try {
+    new Notification({
+      title: tr('missedTitle', { count: missed.length }),
+      body,
+      silent: true
+    }).show();
+  } catch (err) {
+    debugLog(`missed digest failed: ${err.message}`);
+  }
 }
 
 function scanReminders() {
@@ -1607,7 +2185,12 @@ function processReminderQueue() {
 }
 
 function showReminder(task) {
-  debugLog(`showReminder id=${task.id} title=${task.title}`);
+  const availableSounds = new Set(BUILTIN_SOUND_IDS);
+  for (const item of customSoundList()) {
+    if (item.available) availableSounds.add(item.id);
+  }
+  task = { ...task, soundId: resolveTaskSound(task, store.getSettings(), availableSounds) };
+  debugLog(`showReminder id=${task.id} title=${task.title} sound=${task.soundId}`);
   reminderBusyId = task.id;
   if (!reminderWin) {
     const { workArea } = screen.getPrimaryDisplay();
@@ -1627,7 +2210,7 @@ function showReminder(task) {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false
       }
     });
@@ -1706,6 +2289,14 @@ function broadcastLanguage(language) {
   }
 }
 
+function broadcastWidgetState() {
+  if (!plannerWin || plannerWin.isDestroyed()) return;
+  plannerWin.webContents.send('widget:state', {
+    pinned: widgetPinned,
+    visible: !!(widgetWin && !widgetWin.isDestroyed() && widgetWin.isVisible())
+  });
+}
+
 function customLogoPath() {
   const name = store.getSettings().customLogo;
   if (!name) return null;
@@ -1724,6 +2315,103 @@ function customLogoDataUrl() {
   }
 }
 
+function normalizeSoundVolume(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_SOUND_VOLUME;
+  return Math.min(100, Math.max(0, Math.round(number)));
+}
+
+function validCustomSoundFile(file) {
+  return typeof file === 'string' && /^custom-[a-z0-9-]+\.(mp3|wav|ogg|m4a)$/i.test(file);
+}
+
+function customSoundPath(file) {
+  return validCustomSoundFile(file) ? path.join(app.getPath('userData'), file) : null;
+}
+
+function customSoundAvailable(file) {
+  const target = customSoundPath(file);
+  if (!target) return false;
+  try {
+    const stat = fs.statSync(target);
+    return stat.isFile() && stat.size > 0 && stat.size <= SOUND_MAX_BYTES;
+  } catch (err) {
+    return false;
+  }
+}
+
+function customSoundList() {
+  const list = store.getSettings().customSounds;
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => ({
+    id: item.id,
+    name: item.name,
+    file: item.file,
+    available: customSoundAvailable(item.file)
+  }));
+}
+
+function customSoundById(id) {
+  return customSoundList().find((item) => item.id === id) || null;
+}
+
+function soundPayload() {
+  const settings = store.getSettings();
+  const custom = customSoundList();
+  const requested = settings.notificationSound;
+  const builtin = BUILTIN_SOUND_IDS.has(requested);
+  const selected = custom.find((item) => item.id === requested);
+  const missing = !builtin && (!selected || !selected.available);
+  return {
+    value: builtin ? requested : selected && selected.available ? selected.id : 'soft',
+    selected: requested,
+    volume: normalizeSoundVolume(settings.notificationVolume),
+    custom: custom.map(({ id, name, available }) => ({ id, name, available })),
+    maxCustom: MAX_CUSTOM_SOUNDS,
+    selectedCustom: selected ? selected.id : null,
+    tagSounds: settings.notificationTagSounds && typeof settings.notificationTagSounds === 'object'
+      ? { ...settings.notificationTagSounds }
+      : {},
+    missing
+  };
+}
+
+function normalizeTagSoundKey(value) {
+  if (value === 'important') return value;
+  if (typeof value !== 'string' || !value.startsWith('tag:')) return null;
+  const tag = value.slice(4).trim().toLowerCase().replace(/\s+/g, ' ');
+  return tag ? `tag:${tag.slice(0, 24)}` : null;
+}
+
+function readCustomSoundData(id) {
+  const item = id ? customSoundById(id) : customSoundById(store.getSettings().notificationSound);
+  if (!item) return { error: 'custom' };
+  const target = customSoundPath(item.file);
+  if (!target) return { error: 'missing' };
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile() || stat.size <= 0) return { error: 'read' };
+    if (stat.size > SOUND_MAX_BYTES) return { error: 'size' };
+    const mime = SOUND_TYPES.get(path.extname(target).toLowerCase()) || 'application/octet-stream';
+    return { dataUrl: `data:${mime};base64,${fs.readFileSync(target).toString('base64')}` };
+  } catch (err) {
+    debugLog(`sound read failed: ${err.message}`);
+    return { error: 'read' };
+  }
+}
+
+function uniqueSoundName(list, proposed) {
+  const base = String(proposed || '').trim().replace(/\s+/g, ' ').slice(0, 40) || 'Свой звук';
+  let name = base;
+  let index = 2;
+  while (list.some((item) => item.name === name)) {
+    const suffix = ` ${index}`;
+    name = `${base.slice(0, Math.max(1, 40 - suffix.length))}${suffix}`;
+    index += 1;
+  }
+  return name;
+}
+
 function syncReminderWithStore() {
   if (!reminderBusyId) return;
   const task = store.getTask(reminderBusyId);
@@ -1740,6 +2428,32 @@ function syncReminderWithStore() {
 
 function registerIpc() {
   ipcMain.handle('tasks:list', () => store.listTasks());
+
+  ipcMain.handle('tasks:list-archived', () => store.listArchived());
+
+  ipcMain.handle('tasks:archive', (_event, id) => {
+    const task = store.archiveTask(id);
+    if (task) broadcastChange();
+    return task;
+  });
+
+  ipcMain.handle('tasks:unarchive', (_event, id) => {
+    const task = store.unarchiveTask(id);
+    if (task) broadcastChange();
+    return task;
+  });
+
+  ipcMain.handle('tasks:archive-done', (_event, days) => {
+    const archived = store.archiveDone(days);
+    if (archived) broadcastChange();
+    return archived;
+  });
+
+  ipcMain.handle('tasks:purge-archived', (_event, days) => {
+    const removed = store.purgeArchived(days);
+    if (removed) broadcastChange();
+    return removed;
+  });
 
   ipcMain.handle('tasks:add', (_event, payload) => {
     const task = store.addTask(payload || {});
@@ -1802,6 +2516,7 @@ function registerIpc() {
   ipcMain.handle('app:info', () => ({
     autostart: store.getSettings().autostart !== false,
     pinned: widgetPinned,
+    widgetVisible: !!(widgetWin && !widgetWin.isDestroyed() && widgetWin.isVisible()),
     packaged: app.isPackaged,
     openPlannerOnStart: store.getSettings().openPlannerOnStart !== false,
     platform: process.platform,
@@ -1915,6 +2630,140 @@ function registerIpc() {
     return null;
   });
 
+  ipcMain.handle('sound:get', () => soundPayload());
+
+  ipcMain.handle('sound:data', (_event, id) => readCustomSoundData(id));
+
+  ipcMain.handle('sound:set', (_event, id) => {
+    if (typeof id !== 'string') return { ok: false, reason: 'invalid' };
+    if (BUILTIN_SOUND_IDS.has(id)) {
+      store.setSettings({ notificationSound: id });
+      return { ok: true, ...soundPayload() };
+    }
+    const item = customSoundById(id);
+    if (!item) return { ok: false, reason: 'invalid' };
+    if (!item.available) return { ok: false, reason: 'custom-missing' };
+    store.setSettings({ notificationSound: id });
+    return { ok: true, ...soundPayload() };
+  });
+
+  ipcMain.handle('sound:set-volume', (_event, value) => {
+    store.setSettings({ notificationVolume: normalizeSoundVolume(value) });
+    return { ok: true, ...soundPayload() };
+  });
+
+  ipcMain.handle('sound:set-tag', (_event, payload) => {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    const key = normalizeTagSoundKey(data.key);
+    if (!key) return { ok: false, reason: 'invalid-key' };
+    const current = {
+      ...(store.getSettings().notificationTagSounds && typeof store.getSettings().notificationTagSounds === 'object'
+        ? store.getSettings().notificationTagSounds
+        : {})
+    };
+    const sound = typeof data.sound === 'string' ? data.sound.trim() : '';
+    if (!sound) {
+      delete current[key];
+    } else {
+      const custom = customSoundById(sound);
+      if (!BUILTIN_SOUND_IDS.has(sound) && (!custom || !custom.available)) {
+        return { ok: false, reason: custom ? 'custom-missing' : 'invalid-sound' };
+      }
+      current[key] = sound;
+    }
+    store.setSettings({ notificationTagSounds: current });
+    return { ok: true, ...soundPayload() };
+  });
+
+  ipcMain.handle('sound:choose', async () => {
+    const options = {
+      title: tr('chooseSoundTitle'),
+      properties: ['openFile'],
+      filters: [{ name: tr('audioFilter'), extensions: ['mp3', 'wav', 'ogg', 'm4a'] }]
+    };
+    const result = plannerWin
+      ? await dialog.showOpenDialog(plannerWin, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths.length) return null;
+    const source = result.filePaths[0];
+    const extension = path.extname(source).toLowerCase();
+    if (!SOUND_TYPES.has(extension)) return { error: 'type' };
+    try {
+      const stat = fs.statSync(source);
+      if (!stat.isFile() || stat.size <= 0) return { error: 'read' };
+      if (stat.size > SOUND_MAX_BYTES) return { error: 'size' };
+      const suggestedName = path.basename(source, path.extname(source)).trim().slice(0, 40) || 'Свой звук';
+      return { source, suggestedName };
+    } catch (err) {
+      debugLog(`sound choose failed: ${err.message}`);
+      return { error: 'read' };
+    }
+  });
+
+  ipcMain.handle('sound:add', async (_event, payload) => {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    const source = typeof data.source === 'string' ? data.source : '';
+    if (!source) return { error: 'read' };
+    const extension = path.extname(source).toLowerCase();
+    if (!SOUND_TYPES.has(extension)) return { error: 'type' };
+    const current = customSoundList();
+    if (current.length >= MAX_CUSTOM_SOUNDS) return { error: 'limit' };
+    let dest = null;
+    try {
+      const stat = fs.statSync(source);
+      if (!stat.isFile() || stat.size <= 0) return { error: 'read' };
+      if (stat.size > SOUND_MAX_BYTES) return { error: 'size' };
+      const id = `custom-${crypto.randomUUID()}`;
+      const fileName = `${id}${extension}`;
+      dest = path.join(app.getPath('userData'), fileName);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(source, dest);
+      const name = uniqueSoundName(current, data.name);
+      const next = [...(store.getSettings().customSounds || []), { id, name, file: fileName }];
+      store.setSettings({ customSounds: next, notificationSound: id });
+      return { ok: true, ...soundPayload() };
+    } catch (err) {
+      if (dest) {
+        try {
+          fs.unlinkSync(dest);
+        } catch (cleanupErr) {
+          // ignore
+        }
+      }
+      debugLog(`sound add failed: ${err.message}`);
+      return { error: 'save' };
+    }
+  });
+
+  ipcMain.handle('sound:remove', async (_event, id) => {
+    const item = customSoundById(id);
+    if (!item) return { ok: false, reason: 'invalid' };
+    const confirmOptions = {
+      type: 'question',
+      title: tr('removeSoundTitle'),
+      message: tr('removeSoundConfirm', { name: item.name }),
+      buttons: [tr('remove'), tr('cancel')],
+      defaultId: 1,
+      cancelId: 1
+    };
+    const confirm = plannerWin
+      ? await dialog.showMessageBox(plannerWin, confirmOptions)
+      : await dialog.showMessageBox(confirmOptions);
+    if (confirm.response !== 0) return { canceled: true };
+    const target = customSoundPath(item.file);
+    if (target) {
+      try {
+        fs.unlinkSync(target);
+      } catch (err) {
+        // ignore
+      }
+    }
+    const next = (store.getSettings().customSounds || []).filter((entry) => entry.id !== id);
+    const selected = store.getSettings().notificationSound === id;
+    store.setSettings({ customSounds: next, ...(selected ? { notificationSound: 'soft' } : {}) });
+    return { ok: true, ...soundPayload() };
+  });
+
   ipcMain.handle('widget:pin', async () => {
     const ok = await pinWidget();
     refreshTrayMenu();
@@ -1987,12 +2836,13 @@ function registerIpc() {
   ipcMain.handle('data:import', async () => {
     const confirm = await showPlannerDialog('showMessageBox', {
       type: 'question',
-      buttons: [tr('importTitle'), tr('cancel')],
-      defaultId: 1,
-      cancelId: 1,
-      message: tr('importConfirm')
+      buttons: [tr('importReplace'), tr('importMerge'), tr('cancel')],
+      defaultId: 0,
+      cancelId: 2,
+      message: tr('importModeMessage')
     });
-    if (confirm.response !== 0) return { canceled: true };
+    if (confirm.response === 2) return { canceled: true };
+    const mode = confirm.response === 1 ? 'merge' : 'replace';
     const result = await showPlannerDialog('showOpenDialog', {
       title: tr('importTitle'),
       properties: ['openFile'],
@@ -2000,7 +2850,8 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePaths.length) return { canceled: true };
     try {
-      return { count: importTasksFrom(result.filePaths[0]) };
+      const imported = importTasksFrom(result.filePaths[0], mode);
+      return { count: imported.count, mode: imported.mode, skipped: imported.skipped };
     } catch (err) {
       return { error: err.message };
     }
@@ -2017,10 +2868,10 @@ function registerIpc() {
   ipcMain.handle('cleanup:set', (_event, value) => {
     const next = ['never', '30', '90'].includes(value) ? value : 'never';
     store.setSettings({ autoCleanupDone: next });
-    let removed = 0;
-    if (next !== 'never') removed = store.cleanupDone(Number(next));
-    if (removed) broadcastChange();
-    return { value: next, removed };
+    let archived = 0;
+    if (next !== 'never') archived = store.archiveDone(Number(next));
+    if (archived) broadcastChange();
+    return { value: next, archived };
   });
 
   ipcMain.handle('widget:drag-start', () => {
@@ -2138,5 +2989,48 @@ function logConsole(win, tag) {
   });
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[${tag}] render-process-gone`, details);
+    debugLog(`${tag} render-process-gone reason=${details && details.reason} exitCode=${details && details.exitCode}`);
+    if (quitting || SMOKE) return;
+    if (!shouldRecreateRenderer(tag)) {
+      debugLog(`${tag} renderer crashed too often; not recreating`);
+      return;
+    }
+    if (tag === 'planner') {
+      try {
+        if (plannerWin && !plannerWin.isDestroyed()) plannerWin.destroy();
+      } catch (err) {
+        // ignore
+      }
+      plannerWin = null;
+      setTimeout(() => {
+        if (!quitting) openPlanner();
+      }, 800);
+    } else if (tag === 'widget') {
+      try {
+        if (widgetWin && !widgetWin.isDestroyed()) widgetWin.destroy();
+      } catch (err) {
+        // ignore
+      }
+      widgetWin = null;
+      setTimeout(() => {
+        if (!quitting && !widgetWin) createWidget();
+      }, 800);
+    } else if (tag === 'quick') {
+      try {
+        if (quickWin && !quickWin.isDestroyed()) quickWin.destroy();
+      } catch (err) {
+        // ignore
+      }
+      quickWin = null;
+    } else if (tag === 'reminder') {
+      try {
+        if (reminderWin && !reminderWin.isDestroyed()) reminderWin.destroy();
+      } catch (err) {
+        // ignore
+      }
+      reminderWin = null;
+      reminderBusyId = null;
+      setTimeout(() => processReminderQueue(), 500);
+    }
   });
 }

@@ -4,7 +4,8 @@
 
 - Windows 10/11 x64, macOS 12+, или Linux x64
 - Node.js 20+ и npm
-- PowerShell 5.1 (скрипты сборки ассетов, только Windows)
+- Koffi ставится через `npm install` (Node-API, готовые бинарники; сборка не нужна)
+- PowerShell 5.1 (скрипты сборки ассетов и fallback закрепления, только Windows)
 - macOS-сборка возможна только на macOS
 
 ## Запуск и тесты
@@ -12,7 +13,7 @@
 ```powershell
 npm install
 npm start
-npm test           # юнит-тесты стора и парсера (scripts/test-store.js, test-quick-parse.js)
+npm test           # юнит-тесты: стор, парсер, хоткеи, звуки, импорт/экспорт, win32
 npm run smoke      # загрузка приложения без окон, авто-выход
 npm run mcp:smoke  # MCP: init → list → add_tasks → update → delete
 ```
@@ -30,6 +31,9 @@ $env:PP_DEBUG="1"; $env:PP_QUIT_AFTER="15000"; npm start
 |---|---|
 | `PP_DEBUG=1` | включает `pp-debug.log` и отладочные хуки |
 | `PP_QUIT_AFTER=<мс>` | авто-выход через N мс |
+| `PP_NOLOCK=1` | не требовать single-instance lock (для тестов при запущенном экземпляре) |
+| `GONOW_USER_DATA=<путь>` | изолированная папка данных для smoke/e2e |
+| `PP_CRASHTEST=1` | краш рендерера планера и проверка восстановления |
 | `PP_SCREENSHOT=1` | снимки окон в папку данных (`shot-*.png`) |
 | `PP_SHOT_AT=<мс>` | снимок виджета через N мс |
 | `PP_SETTINGS=1` | открыть настройки планера |
@@ -41,8 +45,12 @@ $env:PP_DEBUG="1"; $env:PP_QUIT_AFTER="15000"; npm start
 | `PP_WATCHDOG_MS=<мс>` | интервал watchdog закрепления |
 | `PP_HOTKEYTEST=1`, `PP_HOTKEYTOGGLE=1`, `PP_HOTKEYVIEW=1` | проверка хоткея |
 | `PP_QUICKHOTKEYTEST=1` | проверка быстрой клавиши, конфликта и сброса |
+| `PP_SOUNDTEST=1` | проверка выбора звука уведомления |
+| `PP_VOLUMETEST=1` | проверка ползунка громкости мышью на 0% и 100% |
+| `PP_PINTEST=1` | скрыть, вернуть и пересоздать виджет с повторным закреплением |
 | `PP_PICKERTEST=1`, `PP_PICKERHOLD=date\|time\|widget` | проверка пикеров |
 | `PP_NOTETEST=1`, `PP_MAXTEST=1`, `PP_REMINDER=1` | проверка заметки, разворота окна, напоминания |
+| `PP_REMINDERTEST=1` | повторный показ отложенного напоминания |
 | `PP_SEARCHTEST=1`, `PP_UNDOTEST=1`, `PP_STATSTEST=1` | проверка поиска, отмены и статистики |
 | `PP_QUICKTEST=1` | сценарий быстрого добавления (`Ctrl+Alt+Space`)
 | `PP_PLATFORMTEST=1` | проверка платформенных настроек (pin/on-top)
@@ -56,34 +64,69 @@ $env:PP_DEBUG="1"; $env:PP_QUIT_AFTER="15000"; npm start
 иконками рабочего стола), и поднимается через `SetWindowPos`. Проверки используют
 `GetAncestor(hwnd, GA_PARENT)` — у popup-окна `GetParent` возвращает 0.
 
+Основной путь — нативный `src/win32.js` через Koffi (Node-API). Если модуль
+недоступен или вызов не удался, `src/pin.js` откатывается на прежний
+PowerShell-скрипт. Watchdog проверяет закрепление раз в 5 минут, а также на
+`powerMonitor.resume` и события смены дисплеев; параллельные проверки
+заблокированы.
+
 ## Быстрое добавление
 
 - `renderer/shared/quick-parse.js` — UMD-парсер: даты (сегодня/завтра/дни недели/
   «через N дней»/`дд.мм`), время (`15:00`, «в 9 вечера»), теги `#tag`, «важно» `!`,
-  «без срока». Тесты — `scripts/test-quick-parse.js`.
+  «без срока», повторения («каждый день», «еженедельно», «по будням»,
+  «каждые N дней»). Тесты — `scripts/test-quick-parse.js`.
 - `renderer/quick.*` — мини-окно (frameless, always-on-top), хоткей
   `Ctrl+Alt+Space` по умолчанию настраивается в параметрах и регистрируется
   вместе с основным в `applyHotkeys()`.
 - Парсер общий для окна и тестов; менять поведение — только там.
 
+## Повторения
+
+- Значения `recurrence`: `none`, `daily`, `weekly`, `monthly`, `weekdays`,
+  `everyN`. Для `everyN` хранится `recurrenceInterval` (2–365 дней).
+- `monthly` клампится к последнему дню месяца (31 января → 28/29 февраля),
+  `weekdays` пропускает субботу и воскресенье.
+- При выполнении задачи создаётся следующая; если приложение было закрыто,
+  catch-up доводит дату до сегодняшнего дня.
+- Интервал и повторение валидируются в сторе, MCP и при импорте.
+
 ## Поиск и статистика
 
 - Поиск/фильтры живут в `renderer/planner.js` и работают поверх `allTasks`
-  (заголовок, заметка, теги), результаты группируются по дате.
-- Статистика считается из `doneAt` выполненных задач; автоочистка
-  (`autoCleanupDone`) ограничивает окно истории.
+  (заголовок, заметка, теги), результаты группируются по дате. Архив — отдельный
+  список `archivedTasks` с фильтром «АРХИВ».
+- Статистика считается из `doneAt` выполненных задач, включая архив; автоархивация
+  (`autoCleanupDone`, значения `30`/`90`) переносит старые выполненные задачи в
+  архив, не удаляя их.
+- `archived`/`archivedAt` хранятся в той же записи задачи; `listTasks()` по
+  умолчанию исключает архив, `listArchived()` возвращает его отдельно.
+- Командная палитра `Ctrl+K`/`Cmd+K` живёт в `renderer/planner.js`: оверлей,
+  fuzzy-фильтр, `aria-activedescendant`, стрелки/Enter/Esc и команды поверх
+  существующих функций (фильтры, настройки, MCP, экспорт, темы, языки).
 
 ## MCP
 
-- `mcp/gonow-mcp.js` — stdio JSON-RPC, без зависимостей.
-- При запущенном приложении используется мост `127.0.0.1` (порт и токен в
-  `bridge.json`), иначе — файл данных с блокировкой `store.lock`.
+- `mcp/src/*.ts` — stdio MCP-сервер на `@modelcontextprotocol/server` v2 + Zod;
+  `npm run build:mcp` собирает один CJS-бандл `mcp/gonow-mcp.js` (Node >= 20).
+- `mcp/src/bridge.ts` — мост и файловый fallback; `mcp/src/store.ts` — операции
+  над задачами; `mcp/src/index.ts` — регистрация инструментов и `serveStdio`.
+- Инструменты: `list_tasks` (`include_archived`), `add_task`, `add_tasks`,
+  `update_task`, `delete_task`, `complete_task`, `snooze_task`, `get_stats`,
+  `list_tags`, `archive_task`, `restore_task`.
+- При запущенном приложении используется named pipe (Windows) или Unix-socket
+  (macOS/Linux); путь и токен лежат в `bridge.json`.
+- Если приложение живо, но мост недоступен, MCP не пишет файл данных и
+  возвращает ошибку — это защищает от потери изменений.
+- Если приложение не запущено, используется файл данных с блокировкой
+  `store.lock` и резервной копией `.bak`.
 - `bridge.log` и `GET /health` помогают диагностировать мост.
 - `npm run mcp:smoke` создаёт и удаляет собственные тестовые задачи.
 
 ## Сборка релиза
 
 ```powershell
+npm run build:mcp # mcp/gonow-mcp.js из mcp/src (v2 SDK + Zod)
 npm run icons     # build/icon.png, build/icon.icns, иконки трея
 npm run dist:win  # NSIS + portable
 npm run dist:linux # AppImage + deb (Linux или CI)
@@ -126,13 +169,16 @@ GitHub Release по тегу `v*`. macOS собирается без подпи�
 - macOS: `~/Library/Application Support/Go, Now!/`
 - Linux: `~/.config/Go, Now!/`
 
-- `pixel-planner.json` — задачи и настройки;
+- `pixel-planner.json` — задачи и настройки (schemaVersion 3; архив хранится
+  флагами `archived`/`archivedAt` в тех же задачах);
 - `pixel-planner.json.bak` — резервная копия на момент запуска;
 - `backups/pixel-planner-YYYY-MM-DD.json` — ежедневные копии (последние 7);
 - `pixel-planner.json.corrupt-<timestamp>.json` — повреждённый файл, если JSON
   не разобрался (приложение восстанавливается из `.bak` или `backups/`);
-- `bridge.json`, `bridge.log`, `store.lock` — рантайм моста;
-- `mcp/gonow-mcp.js` — стабильная копия MCP-сервера для конфигов клиентов;
+- `bridge.json` — путь к named pipe/Unix-socket и токен моста;
+- `bridge.log`, `store.lock` — журнал моста и блокировка файла данных;
+- `mcp/gonow-mcp.js` — собранный из `mcp/src` CJS-бандл и его стабильная копия
+  для конфигов клиентов;
 - `pp-debug.log`, `shot-*.png` — только в отладочном режиме.
 
 Сброс данных: закрыть приложение и удалить папку данных.

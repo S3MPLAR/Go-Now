@@ -2,21 +2,37 @@
   "name": "gonow",
   "productName": "Go, Now!",
   "desktopName": "gonow.desktop",
-  "version": "2.0.0",
-  "description": "Pixel-art task planner with a desktop widget, reminders and MCP integration for Windows, Linux and macOS",
+  "version": "2.1.0",
+  "description": "Pixel task planner with a desktop widget, reminders and MCP integration",
   "main": "main.js",
   "scripts": {
+    "build:mcp": "node scripts/build-mcp.mjs",
+    "prestart": "npm run build:mcp",
     "start": "electron .",
+    "presmoke": "npm run build:mcp",
     "smoke": "electron . --smoke",
-    "test": "node scripts/test-store.js && node scripts/test-quick-parse.js && node scripts/test-accelerators.js",
+    "pretest": "npm run build:mcp",
+    "test": "node scripts/test-store.js && node scripts/test-quick-parse.js && node scripts/test-accelerators.js && node scripts/test-sound-routing.js && node scripts/test-data-transfer.js && node scripts/test-win32.js && node scripts/test-mcp-guard.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit && npm run typecheck:mcp",
+    "typecheck:mcp": "tsc --noEmit -p mcp/tsconfig.json",
+    "test:e2e": "playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "premcp:smoke": "npm run build:mcp",
     "mcp:smoke": "node scripts/mcp-smoke.js",
     "ico": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-ico.ps1",
     "brand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-brand.ps1",
     "winicons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-winicons.ps1",
     "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icons.ps1",
+    "predist": "npm run build:mcp",
     "dist": "electron-builder --win",
+    "predist:win": "npm run build:mcp",
     "dist:win": "electron-builder --win",
+    "predist:linux": "npm run build:mcp",
     "dist:linux": "electron-builder --linux",
+    "predist:mac": "npm run build:mcp",
     "dist:mac": "electron-builder --mac"
   },
   "build": {
@@ -35,7 +51,13 @@
       "renderer/**/*",
       "package.json",
       "LICENSE",
-      "THIRD_PARTY_NOTICES.md"
+      "THIRD_PARTY_NOTICES.md",
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/**/*"
     ],
     "extraResources": [
       {
@@ -51,8 +73,8 @@
         "to": "licenses/fonts"
       },
       {
-        "from": "mcp",
-        "to": "mcp"
+        "from": "mcp/gonow-mcp.js",
+        "to": "mcp/gonow-mcp.js"
       }
     ],
     "win": {
@@ -111,14 +133,6 @@
   },
   "author": "Alexander Ancibor",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/S3MPLAR/Go-Now.git"
-  },
-  "homepage": "https://github.com/S3MPLAR/Go-Now#readme",
-  "bugs": {
-    "url": "https://github.com/S3MPLAR/Go-Now/issues"
-  },
   "private": true,
   "engines": {
     "node": ">=20"
@@ -126,20 +140,26 @@
   "keywords": [
     "tasks",
     "planner",
-    "todo",
     "desktop-widget",
     "electron",
     "reminders",
-    "mcp",
-    "pixel-art",
-    "windows",
-    "linux",
-    "macos",
-    "offline",
-    "productivity"
+    "mcp"
   ],
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
     "electron": "^45.2.2",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
+  },
+  "dependencies": {
+    "koffi": "^3.3.7"
   }
 }
