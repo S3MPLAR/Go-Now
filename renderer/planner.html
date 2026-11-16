@@ -35,13 +35,14 @@
       </div>
 
       <div class="search-bar">
-        <input id="searchInput" type="search" data-i18n-placeholder="search.placeholder" placeholder="Поиск: текст или #тег" autocomplete="off">
+        <input id="searchInput" type="search" data-i18n-placeholder="search.placeholder" placeholder="Поиск: текст или #тег" autocomplete="off" aria-keyshortcuts="Control+K Meta+K" data-i18n-title="palette.shortcut" title="Ctrl+K — команды">
         <button type="button" class="pixel-btn ghost small" id="searchClear" data-i18n="search.clear" hidden>СБРОС</button>
       </div>
       <div class="filter-chips" id="filterChips">
         <button type="button" class="filter-chip active" data-filter="all" data-i18n="filter.all">ВСЕ</button>
         <button type="button" class="filter-chip" data-filter="active" data-i18n="filter.active">АКТИВНЫЕ</button>
         <button type="button" class="filter-chip" data-filter="done" data-i18n="filter.done">ВЫПОЛНЕННЫЕ</button>
+        <button type="button" class="filter-chip" data-filter="archived" data-i18n="filter.archived">АРХИВ</button>
         <button type="button" class="tag-chip filter-tag" id="activeTagChip" hidden></button>
       </div>
 
@@ -73,7 +74,8 @@
         <div class="day-head">
           <h3 data-i18n="search.title">ПОИСК</h3>
           <span id="searchStats" class="stats"></span>
-          <button type="button" class="pixel-btn ghost small" id="clearDoneBtn" hidden data-i18n="search.clearDone">ОЧИСТИТЬ ВЫПОЛНЕННЫЕ</button>
+          <button type="button" class="pixel-btn ghost small" id="clearDoneBtn" hidden data-i18n="search.clearDone">АРХИВИРОВАТЬ ВЫПОЛНЕННЫЕ</button>
+          <button type="button" class="pixel-btn ghost small" id="purgeArchiveBtn" hidden data-i18n="archive.purge">ОЧИСТИТЬ АРХИВ</button>
         </div>
         <div id="searchResults" class="search-results"></div>
         <div id="searchEmpty" class="day-empty" hidden>
@@ -106,6 +108,7 @@
             <div class="repeat-field">
               <button type="button" class="repeat-btn" id="repeatBtn" aria-haspopup="listbox" aria-expanded="false"></button>
               <input type="hidden" id="repeatInput" value="none">
+              <input type="number" id="repeatInterval" class="repeat-interval" min="2" max="365" step="1" value="2" hidden data-i18n-aria-label="repeat.interval" data-i18n-title="repeat.interval">
             </div>
           </div>
           <div class="field">
@@ -195,6 +198,43 @@
             <p class="hint" id="logoHint" data-i18n="logo.hint">PNG, JPG или WebP. Показывается в шапке планера.</p>
           </div>
           <div class="field">
+            <label data-i18n="field.sound">Звук уведомления</label>
+            <div class="sound-row">
+              <button type="button" class="repeat-btn sound-select" id="soundSelectBtn" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria-label="field.sound">
+                <span id="soundSelectLabel">Мягкий</span>
+              </button>
+              <button type="button" class="pixel-btn ghost sound-preview" id="soundPreviewBtn" data-i18n-title="sound.previewTitle" data-i18n-aria-label="sound.previewTitle" title="Прослушать" aria-label="Прослушать">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M2 6h3l4-3v10l-4-3H2z"></path>
+                  <path d="M11.5 5.5a4 4 0 0 1 0 5"></path>
+                  <path d="M13.2 3.8a6.5 6.5 0 0 1 0 8.4"></path>
+                </svg>
+              </button>
+            </div>
+            <div class="sound-volume-row">
+              <svg class="sound-volume-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2 6h3l4-3v10l-4-3H2z"></path>
+              </svg>
+              <input type="range" id="soundVolume" min="0" max="100" step="1" value="80" data-i18n-aria-label="sound.volume">
+              <span class="sound-volume-value" id="soundVolumeValue">80%</span>
+            </div>
+            <p class="hint" id="soundHint" data-i18n="sound.hint">MP3, WAV, OGG или M4A, до 5 МБ.</p>
+          </div>
+          <div class="field">
+            <label data-i18n="field.tagSounds">Звуки по тегам</label>
+            <div class="tag-sound-editor">
+              <button type="button" class="repeat-btn tag-sound-select" id="tagSoundTagBtn" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria-label="tagSound.select">
+                <span id="tagSoundTagLabel" data-i18n="tagSound.important">Важное</span>
+              </button>
+              <button type="button" class="repeat-btn tag-sound-select" id="tagSoundSoundBtn" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria-label="tagSound.sound">
+                <span id="tagSoundSoundLabel" data-i18n="tagSound.general">Общий звук</span>
+              </button>
+            </div>
+            <button type="button" class="pixel-btn ghost small tag-sound-save" id="tagSoundSave" data-i18n="tagSound.save">СОХРАНИТЬ</button>
+            <div class="tag-sound-list" id="tagSoundList"></div>
+            <p class="hint" id="tagSoundHint" data-i18n="tagSound.hint">Приоритет: Важное → первый подходящий тег → общий звук.</p>
+          </div>
+          <div class="field">
             <label data-i18n="field.hotkeys">Горячие клавиши</label>
             <div class="hotkey-item">
               <span class="hotkey-label" data-i18n="hotkey.planner">Открыть планер</span>
@@ -238,13 +278,13 @@
             <p class="hint" id="dataHint" data-i18n="data.hint">Экспорт и импорт задач в JSON.</p>
           </div>
           <div class="field">
-            <label for="cleanupSelect" data-i18n="field.cleanup">Очистка выполненных</label>
+            <label for="cleanupSelect" data-i18n="field.cleanup">Архивация выполненных</label>
             <select id="cleanupSelect">
-              <option value="never" data-i18n="cleanup.never">Хранить всё</option>
-              <option value="30" data-i18n="cleanup.30">Удалять старше 30 дней</option>
-              <option value="90" data-i18n="cleanup.90">Удалять старше 90 дней</option>
+              <option value="never" data-i18n="cleanup.never">Не архивировать</option>
+              <option value="30" data-i18n="cleanup.30">Архивировать старше 30 дней</option>
+              <option value="90" data-i18n="cleanup.90">Архивировать старше 90 дней</option>
             </select>
-            <p class="hint" id="cleanupHint" data-i18n="cleanup.hint">Удаляются только выполненные задачи. Бэкапы сохраняются.</p>
+            <p class="hint" id="cleanupHint" data-i18n="cleanup.hint">Выполненные задачи старше срока переносятся в архив. Удалить их можно в архиве.</p>
           </div>
           <div class="field">
             <label data-i18n="field.mcp">MCP для AI-агента</label>
@@ -262,6 +302,30 @@
     <button type="button" class="pixel-btn small" id="toastUndo" data-i18n="toast.undo">ОТМЕНИТЬ</button>
   </div>
 
+  <div class="sound-overlay" id="soundNameOverlay" hidden>
+    <div class="sound-modal" role="dialog" aria-modal="true" aria-labelledby="soundNameTitle">
+      <h3 id="soundNameTitle" data-i18n="sound.nameTitle">Название звука</h3>
+      <input id="soundNameInput" type="text" maxlength="40" autocomplete="off" spellcheck="false" data-i18n-placeholder="sound.namePlaceholder">
+      <p class="hint" id="soundNameHint" data-i18n="sound.nameHint">Так звук будет называться в списке.</p>
+      <div class="sound-modal-actions">
+        <button type="button" class="pixel-btn" id="soundNameSave" data-i18n="sound.save">СОХРАНИТЬ</button>
+        <button type="button" class="pixel-btn ghost" id="soundNameCancel" data-i18n="sound.cancel">ОТМЕНА</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="palette-overlay" id="paletteOverlay" hidden>
+    <div class="palette-modal" role="dialog" aria-modal="true" aria-labelledby="paletteTitle">
+      <div class="palette-head">
+        <h3 id="paletteTitle" data-i18n="palette.title">КОМАНДЫ</h3>
+        <kbd class="palette-esc">Esc</kbd>
+      </div>
+      <input id="paletteInput" type="text" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="paletteList" aria-activedescendant="" data-i18n-placeholder="palette.placeholder" placeholder="Команда или задача..." autocomplete="off" spellcheck="false">
+      <ul id="paletteList" class="palette-list" role="listbox" aria-labelledby="paletteTitle"></ul>
+      <p class="palette-hint" id="paletteHint" data-i18n="palette.hint">↑↓ — выбор · Enter — выполнить · Esc — закрыть</p>
+    </div>
+  </div>
+
   <div class="mcp-overlay" id="mcpOverlay" hidden>
     <div class="mcp-modal" role="dialog" aria-modal="true" aria-labelledby="mcpTitle">
       <div class="mcp-head">
@@ -272,8 +336,9 @@
       <ul class="mcp-list">
         <li data-i18n="mcp.what1">Смотреть задачи: на сегодня, за период, по поиску.</li>
         <li data-i18n="mcp.what2">Добавлять одну или несколько задач.</li>
-        <li data-i18n="mcp.what3">Редактировать, отмечать выполненными и удалять.</li>
-        <li data-i18n="mcp.what4">Изменения сразу появляются в планере и виджете.</li>
+        <li data-i18n="mcp.what3">Редактировать, выполнять, откладывать и удалять.</li>
+        <li data-i18n="mcp.what4">Смотреть статистику, теги и архив.</li>
+        <li data-i18n="mcp.what5">Изменения сразу появляются в планере и виджете.</li>
       </ul>
       <h4 class="mcp-subtitle" data-i18n="mcp.commandTitle">Команда для подключения</h4>
       <div class="mcp-clients" id="mcpClients"></div>
@@ -284,6 +349,7 @@
 
   <script src="shared/i18n.js"></script>
   <script src="shared/picker.js"></script>
+  <script src="shared/sound.js"></script>
   <script src="planner.js"></script>
 </body>
 </html>

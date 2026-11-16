@@ -83,6 +83,11 @@ body {
   background: var(--peach-deep);
 }
 
+.quick-chip.repeat {
+  background: var(--peach-deep);
+  border-style: dashed;
+}
+
 .quick-chip.no-due {
   background: var(--bg);
   color: var(--ink-soft);

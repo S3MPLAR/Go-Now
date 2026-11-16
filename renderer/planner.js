@@ -25,6 +25,7 @@ const searchStats = document.getElementById('searchStats');
 const searchResults = document.getElementById('searchResults');
 const searchEmpty = document.getElementById('searchEmpty');
 const clearDoneBtn = document.getElementById('clearDoneBtn');
+const purgeArchiveBtn = document.getElementById('purgeArchiveBtn');
 const toast = document.getElementById('toast');
 const toastText = document.getElementById('toastText');
 const toastUndo = document.getElementById('toastUndo');
@@ -40,6 +41,7 @@ const dateInput = document.getElementById('dateInput');
 const timeInput = document.getElementById('timeInput');
 const repeatInput = document.getElementById('repeatInput');
 const repeatBtn = document.getElementById('repeatBtn');
+const repeatInterval = document.getElementById('repeatInterval');
 const tagsInput = document.getElementById('tagsInput');
 const tagsToggle = document.getElementById('tagsToggle');
 const importantToggle = document.getElementById('importantToggle');
@@ -71,6 +73,9 @@ const cleanupHint = document.getElementById('cleanupHint');
 const dataHint = document.getElementById('dataHint');
 const appVersion = document.getElementById('appVersion');
 const mcpBtn = document.getElementById('mcpBtn');
+const paletteOverlay = document.getElementById('paletteOverlay');
+const paletteInput = document.getElementById('paletteInput');
+const paletteList = document.getElementById('paletteList');
 const mcpOverlay = document.getElementById('mcpOverlay');
 const mcpClose = document.getElementById('mcpClose');
 const mcpClients = document.getElementById('mcpClients');
@@ -82,6 +87,24 @@ const themeGrid = document.getElementById('themeGrid');
 const languageRow = document.getElementById('languageRow');
 const logoChooseBtn = document.getElementById('logoChooseBtn');
 const logoResetBtn = document.getElementById('logoResetBtn');
+const soundSelectBtn = document.getElementById('soundSelectBtn');
+const soundSelectLabel = document.getElementById('soundSelectLabel');
+const soundPreviewBtn = document.getElementById('soundPreviewBtn');
+const soundVolume = document.getElementById('soundVolume');
+const soundVolumeValue = document.getElementById('soundVolumeValue');
+const soundHint = document.getElementById('soundHint');
+const soundNameOverlay = document.getElementById('soundNameOverlay');
+const soundNameInput = document.getElementById('soundNameInput');
+const soundNameHint = document.getElementById('soundNameHint');
+const soundNameSave = document.getElementById('soundNameSave');
+const soundNameCancel = document.getElementById('soundNameCancel');
+const tagSoundTagBtn = document.getElementById('tagSoundTagBtn');
+const tagSoundTagLabel = document.getElementById('tagSoundTagLabel');
+const tagSoundSoundBtn = document.getElementById('tagSoundSoundBtn');
+const tagSoundSoundLabel = document.getElementById('tagSoundSoundLabel');
+const tagSoundSave = document.getElementById('tagSoundSave');
+const tagSoundList = document.getElementById('tagSoundList');
+const tagSoundHint = document.getElementById('tagSoundHint');
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsBody = document.getElementById('settingsBody');
 const settingsCard = settingsToggle.closest('.settings-card');
@@ -91,6 +114,9 @@ const widgetOnTopLine = document.getElementById('widgetOnTopLine');
 const widgetOnTopToggle = document.getElementById('widgetOnTopToggle');
 
 let allTasks = [];
+let archivedTasks = [];
+let canPinWidget = true;
+let widgetState = { visible: false, pinned: false };
 let selectedDate = todayString();
 let view = 'day';
 let editingId = null;
@@ -160,9 +186,12 @@ function shortDate(dateStr) {
   return `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}`;
 }
 
-function recurrenceLabel(recurrence) {
+function recurrenceLabel(recurrence, interval) {
   if (recurrence === 'daily') return t('rec.daily');
   if (recurrence === 'weekly') return t('rec.weekly');
+  if (recurrence === 'monthly') return t('rec.monthly');
+  if (recurrence === 'weekdays') return t('rec.weekdays');
+  if (recurrence === 'everyN') return t('rec.everyN', { count: interval || 2 });
   return '';
 }
 
@@ -187,8 +216,14 @@ function tasksFor(dateStr) {
 }
 
 async function refresh() {
-  allTasks = await api.listTasks();
-  hiddenTags = await api.getHiddenTags();
+  const [tasks, archived, hidden] = await Promise.all([
+    api.listTasks(),
+    api.listArchived(),
+    api.getHiddenTags()
+  ]);
+  allTasks = tasks;
+  archivedTasks = archived;
+  hiddenTags = hidden;
   collectTags();
   renderStats();
   render();
@@ -203,7 +238,7 @@ function doneDateKey(task) {
 
 function renderStats() {
   const counts = new Map();
-  for (const task of allTasks) {
+  for (const task of allTasks.concat(archivedTasks)) {
     const key = doneDateKey(task);
     if (key) counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -248,7 +283,7 @@ function renderStats() {
 function collectTags() {
   const seen = new Map();
   const hidden = new Set((hiddenTags || []).map((tag) => tag.toLowerCase()));
-  for (const task of allTasks) {
+  for (const task of allTasks.concat(archivedTasks)) {
     for (const tag of task.tags || []) {
       const key = tag.toLowerCase();
       if (hidden.has(key)) continue;
@@ -321,7 +356,8 @@ function formatGroupDate(dateStr) {
 function renderSearch() {
   const query = searchQuery.trim().toLowerCase();
   const tag = activeTag ? activeTag.toLowerCase() : null;
-  let tasks = allTasks.filter((task) => {
+  const source = searchFilter === 'archived' ? archivedTasks : allTasks;
+  let tasks = source.filter((task) => {
     if (tag && !(task.tags || []).some((item) => item.toLowerCase() === tag)) return false;
     if (searchFilter === 'active' && task.done) return false;
     if (searchFilter === 'done' && !task.done) return false;
@@ -334,6 +370,7 @@ function renderSearch() {
   });
   searchStats.textContent = t('search.count', { count: tasks.length });
   clearDoneBtn.hidden = !(searchFilter === 'done' && tasks.length > 0);
+  purgeArchiveBtn.hidden = !(searchFilter === 'archived' && tasks.length > 0);
 
   const groups = new Map();
   for (const task of tasks) {
@@ -403,8 +440,9 @@ function renderDay() {
 }
 
 function buildDayRow(task, options = {}) {
+  const isArchived = options.archived === true || task.archived === true;
   const li = document.createElement('li');
-  li.className = task.done ? 'day-item done' : 'day-item';
+  li.className = `${task.done ? 'day-item done' : 'day-item'}${isArchived ? ' archived' : ''}`;
   li.dataset.id = task.id;
   li.tabIndex = -1;
   li.addEventListener('mousedown', (event) => {
@@ -414,6 +452,7 @@ function buildDayRow(task, options = {}) {
   const check = document.createElement('button');
   check.className = task.done ? 'checkbox checked' : 'checkbox';
   check.type = 'button';
+  check.disabled = isArchived;
   check.title = task.done ? t('task.markUndone') : t('task.markDone');
   check.setAttribute('aria-label', check.title);
   check.addEventListener('click', async () => {
@@ -459,7 +498,7 @@ function buildDayRow(task, options = {}) {
   if (task.recurrence !== 'none') {
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = recurrenceLabel(task.recurrence);
+    badge.textContent = recurrenceLabel(task.recurrence, task.recurrenceInterval);
     top.appendChild(badge);
   }
 
@@ -488,7 +527,7 @@ function buildDayRow(task, options = {}) {
   }
 
   li.appendChild(check);
-  li.appendChild(flag);
+  if (!isArchived) li.appendChild(flag);
   li.appendChild(body);
 
   if (task.time) {
@@ -517,18 +556,41 @@ function buildDayRow(task, options = {}) {
     li.appendChild(move);
   }
 
-  const edit = document.createElement('button');
-  edit.className = 'edit-btn';
-  edit.type = 'button';
-  edit.title = t('task.edit');
-  edit.addEventListener('click', () => startEdit(task));
-  li.appendChild(edit);
+  if (!isArchived) {
+    const edit = document.createElement('button');
+    edit.className = 'edit-btn';
+    edit.type = 'button';
+    edit.title = t('task.edit');
+    edit.addEventListener('click', () => startEdit(task));
+    li.appendChild(edit);
+  }
+
+  if (isArchived) {
+    const restore = document.createElement('button');
+    restore.className = 'restore-btn';
+    restore.type = 'button';
+    restore.title = t('archive.restore');
+    restore.setAttribute('aria-label', restore.title);
+    restore.textContent = '↩';
+    restore.addEventListener('click', async () => {
+      restore.disabled = true;
+      await api.unarchiveTask(task.id);
+      showToast(t('toast.unarchived', { title: task.title }), async () => {
+        await api.archiveTask(task.id);
+        await refresh();
+      });
+      refresh();
+    });
+    li.appendChild(restore);
+  }
 
   const del = document.createElement('button');
   del.className = 'del-btn';
   del.type = 'button';
-  del.title = t('task.delete');
+  del.title = isArchived ? t('archive.deleteForever') : t('task.delete');
+  del.setAttribute('aria-label', del.title);
   del.addEventListener('click', async () => {
+    if (isArchived && !window.confirm(t('archive.deleteForeverConfirm', { title: task.title }))) return;
     del.disabled = true;
     const snapshot = { ...task };
     await api.removeTask(task.id);
@@ -540,7 +602,7 @@ function buildDayRow(task, options = {}) {
   });
   li.appendChild(del);
 
-  if (options.draggable) attachDrag(li, task);
+  if (options.draggable && !isArchived) attachDrag(li, task);
 
   return li;
 }
@@ -804,9 +866,20 @@ clearDoneBtn.addEventListener('click', async () => {
   const doneTasks = allTasks.filter((task) => task.done);
   if (!doneTasks.length) return;
   if (!window.confirm(t('search.clearDoneConfirm', { count: doneTasks.length }))) return;
-  const snapshots = doneTasks.map((task) => ({ ...task }));
-  for (const task of doneTasks) await api.removeTask(task.id);
-  showToast(t('toast.cleared', { count: snapshots.length }), async () => {
+  for (const task of doneTasks) await api.archiveTask(task.id);
+  showToast(t('toast.archivedCount', { count: doneTasks.length }), async () => {
+    for (const task of doneTasks) await api.unarchiveTask(task.id);
+    await refresh();
+  });
+  await refresh();
+});
+
+purgeArchiveBtn.addEventListener('click', async () => {
+  if (!archivedTasks.length) return;
+  if (!window.confirm(t('archive.purgeConfirm', { count: archivedTasks.length }))) return;
+  const snapshots = archivedTasks.map((task) => ({ ...task }));
+  await api.purgeArchived(0);
+  showToast(t('toast.purged', { count: snapshots.length }), async () => {
     for (const snapshot of snapshots) await api.restoreTask(snapshot);
     await refresh();
   });
@@ -819,19 +892,35 @@ function setNoNotifyUi(noNotify) {
   timeInput.disabled = noNotify;
   repeatInput.disabled = noNotify;
   repeatBtn.disabled = noNotify;
+  repeatInterval.disabled = noNotify;
   noNotifyHint.hidden = !noNotify;
 }
 
-function repeatLabel(value) {
+const RECURRENCE_VALUES = ['none', 'daily', 'weekly', 'monthly', 'weekdays', 'everyN'];
+
+function clampInterval(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 2;
+  return Math.min(365, Math.max(2, Math.round(number)));
+}
+
+function repeatLabel(value, interval) {
   if (value === 'daily') return t('repeat.daily');
   if (value === 'weekly') return t('repeat.weekly');
+  if (value === 'monthly') return t('repeat.monthly');
+  if (value === 'weekdays') return t('repeat.weekdays');
+  if (value === 'everyN') return t('repeat.everyN', { count: interval });
   return t('repeat.none');
 }
 
-function setRepeat(value) {
-  const next = ['none', 'daily', 'weekly'].includes(value) ? value : 'none';
+function setRepeat(value, interval) {
+  const next = RECURRENCE_VALUES.includes(value) ? value : 'none';
   repeatInput.value = next;
-  repeatBtn.textContent = repeatLabel(next);
+  if (interval != null) repeatInterval.value = String(clampInterval(interval));
+  const count = clampInterval(repeatInterval.value);
+  repeatInterval.value = String(count);
+  repeatInterval.hidden = next !== 'everyN';
+  repeatBtn.textContent = repeatLabel(next, count);
 }
 
 function parseTags(value) {
@@ -856,7 +945,7 @@ function startEdit(task) {
   setNoNotifyUi(task.notify === false);
   ppPicker.set(dateInput, task.date || '');
   ppPicker.set(timeInput, task.time || '');
-  setRepeat(task.recurrence || 'none');
+  setRepeat(task.recurrence || 'none', task.recurrenceInterval || 2);
   importantToggle.checked = !!task.important;
   tagsInput.value = (task.tags || []).join(', ');
   noteInput.value = task.note || '';
@@ -896,12 +985,13 @@ addForm.addEventListener('submit', async (event) => {
   const important = importantToggle.checked;
   const tags = parseTags(tagsInput.value);
   const payload = noNotify
-    ? { title, date: null, time: null, recurrence: 'none', notify: false, note: noteInput.value.trim(), important, tags }
+    ? { title, date: null, time: null, recurrence: 'none', recurrenceInterval: null, notify: false, note: noteInput.value.trim(), important, tags }
     : {
         title,
         date: ppPicker.get(dateInput) || todayString(),
         time: ppPicker.get(timeInput) || null,
         recurrence: repeatInput.value,
+        recurrenceInterval: repeatInput.value === 'everyN' ? Number(repeatInterval.value) : null,
         notify: true,
         note: noteInput.value.trim(),
         important,
@@ -964,9 +1054,9 @@ openDataBtn.addEventListener('click', () => api.openDataFolder());
 cleanupSelect.addEventListener('change', async () => {
   const result = await api.setCleanup(cleanupSelect.value);
   cleanupSelect.value = result.value;
-  cleanupHint.textContent = result.removed ? t('cleanup.removed', { count: result.removed }) : t('cleanup.hint');
+  cleanupHint.textContent = result.archived ? t('cleanup.archived', { count: result.archived }) : t('cleanup.hint');
   renderStats();
-  if (result.removed) await refresh();
+  if (result.archived) await refresh();
 });
 
 async function loadCleanup() {
@@ -1009,23 +1099,64 @@ repeatBtn.addEventListener('click', () => {
   ppPicker.openChoices(repeatBtn, [
     { value: 'none', label: t('repeat.none') },
     { value: 'daily', label: t('repeat.daily') },
-    { value: 'weekly', label: t('repeat.weekly') }
-  ], repeatInput.value, (value) => setRepeat(value));
+    { value: 'weekly', label: t('repeat.weekly') },
+    { value: 'monthly', label: t('repeat.monthly') },
+    { value: 'weekdays', label: t('repeat.weekdays') },
+    { value: 'everyN', label: t('repeat.everyN', { count: clampInterval(repeatInterval.value) }) }
+  ], repeatInput.value, (value) => {
+    setRepeat(value);
+    if (value === 'everyN') repeatInterval.focus();
+  });
+});
+
+repeatInterval.addEventListener('input', () => {
+  if (repeatInput.value === 'everyN') setRepeat('everyN');
+});
+repeatInterval.addEventListener('change', () => {
+  if (repeatInput.value === 'everyN') setRepeat('everyN');
 });
 
 autostartToggle.addEventListener('change', async () => {
   await api.setAutostart(autostartToggle.checked);
 });
 
-pinBtn.addEventListener('click', async () => {
-  pinBtn.disabled = true;
-  pinBtn.textContent = t('pin.pinning');
-  const ok = await api.pinWidget();
-  if (ok) {
+function applyWidgetState(state) {
+  widgetState = {
+    visible: !!(state && state.visible),
+    pinned: !!(state && state.pinned)
+  };
+  if (!canPinWidget) {
+    pinHint.textContent = t('pin.floating');
+    return;
+  }
+  if (widgetState.visible && widgetState.pinned) {
     pinBtn.textContent = t('pin.pinned');
     pinBtn.disabled = true;
     pinHint.textContent = t('pin.hint');
+  } else if (!widgetState.visible) {
+    pinBtn.textContent = t('pin.show');
+    pinBtn.disabled = false;
+    pinHint.textContent = t('pin.hiddenHint');
   } else {
+    pinBtn.textContent = t('pin.button');
+    pinBtn.disabled = false;
+    pinHint.textContent = t('pin.hint');
+  }
+}
+
+pinBtn.addEventListener('click', async () => {
+  pinBtn.disabled = true;
+  pinBtn.textContent = t('pin.pinning');
+  try {
+    const ok = await api.pinWidget();
+    if (ok) {
+      applyWidgetState({ visible: true, pinned: true });
+    } else {
+      pinBtn.textContent = t('pin.button');
+      pinBtn.disabled = false;
+      pinHint.textContent = t('pin.failed');
+    }
+  } catch (err) {
     pinBtn.textContent = t('pin.button');
     pinBtn.disabled = false;
     pinHint.textContent = t('pin.failed');
@@ -1042,31 +1173,28 @@ async function loadInfo() {
   autostartToggle.checked = !!info.autostart;
   openPlannerToggle.checked = info.openPlannerOnStart !== false;
   appVersion.textContent = `Go, Now! v${info.version}`;
-  const canPin = info.canPin !== false;
-  pinBtn.hidden = !canPin;
-  widgetOnTopLine.hidden = canPin;
+  canPinWidget = info.canPin !== false;
+  pinBtn.hidden = !canPinWidget;
+  widgetOnTopLine.hidden = canPinWidget;
   widgetOnTopToggle.checked = !!info.widgetAlwaysOnTop;
-  if (canPin && info.pinned) {
-    pinBtn.textContent = t('pin.pinned');
-    pinBtn.disabled = true;
-  } else if (canPin && !pinBtn.disabled) {
-    pinBtn.textContent = t('pin.button');
-  }
-  if (!canPin) {
+  if (!canPinWidget) {
     pinHint.textContent = t('pin.floating');
-  } else if (info.autostart && !info.packaged) {
+    return;
+  }
+  applyWidgetState({ visible: info.widgetVisible, pinned: info.pinned });
+  if (info.widgetVisible && info.autostart && !info.packaged) {
     pinHint.textContent = t('autostart.devHint');
-  } else {
-    pinHint.textContent = t('pin.hint');
   }
 }
 
 ppPicker.set(dateInput, todayString());
 setRepeat('none');
 api.onTasksChanged(refresh);
+if (api.onWidgetState) api.onWidgetState((state) => applyWidgetState(state));
 syncSearchUi();
 loadInfo();
 loadCleanup();
+loadSound();
 refresh();
 
 function applyTheme(theme) {
@@ -1081,6 +1209,490 @@ function applyLogo(dataUrl) {
   const source = dataUrl || 'assets/logo.png';
   brandLogo.src = source;
   logoPreview.src = source;
+}
+
+let soundInfo = null;
+let pendingSound = null;
+let previewTimer = 0;
+let tagSoundTagKey = 'important';
+let tagSoundSoundId = null;
+
+const BUILTIN_SOUNDS = [
+  { id: 'soft', key: 'sound.soft' },
+  { id: 'pixel', key: 'sound.pixel' },
+  { id: 'bell', key: 'sound.bell' },
+  { id: 'pulse', key: 'sound.pulse' },
+  { id: 'chime', key: 'sound.chime' },
+  { id: 'click', key: 'sound.click' }
+];
+
+function soundErrorText(code) {
+  if (code === 'size') return t('sound.sizeError');
+  if (code === 'type') return t('sound.typeError');
+  if (code === 'save') return t('sound.saveError');
+  if (code === 'limit') return t('sound.limit');
+  if (code === 'name') return t('sound.nameRequired');
+  if (code === 'custom-missing' || code === 'missing') return t('sound.missing');
+  return t('sound.readError');
+}
+
+function soundLabel(id) {
+  const builtin = BUILTIN_SOUNDS.find((item) => item.id === id);
+  if (builtin) return t(builtin.key);
+  const custom = soundInfo && Array.isArray(soundInfo.custom)
+    ? soundInfo.custom.find((item) => item.id === id)
+    : null;
+  return custom ? custom.name : null;
+}
+
+function setSoundVolumeUi(value) {
+  const number = Number(value);
+  const volume = Number.isFinite(number) ? Math.min(100, Math.max(0, Math.round(number))) : 80;
+  soundVolume.value = String(volume);
+  soundVolumeValue.textContent = `${volume}%`;
+  soundVolume.style.setProperty('--sound-volume', `${volume}%`);
+  soundVolume.setAttribute('aria-valuetext', `${volume}%`);
+  return volume;
+}
+
+function applySoundUi(payload) {
+  soundInfo = payload || {
+    value: 'soft',
+    selected: 'soft',
+    volume: 80,
+    custom: [],
+    selectedCustom: null,
+    missing: false
+  };
+  const selectedLabel = soundLabel(soundInfo.selected) || soundLabel(soundInfo.value) || t('sound.soft');
+  soundSelectLabel.textContent = selectedLabel;
+  soundSelectBtn.title = selectedLabel;
+  setSoundVolumeUi(soundInfo.volume);
+  if (soundInfo.missing) {
+    soundHint.textContent = t('sound.missing');
+  } else {
+    soundHint.textContent = t('sound.hint');
+  }
+  renderTagSoundList();
+  syncTagSoundEditor();
+}
+
+async function loadSound() {
+  try {
+    applySoundUi(await api.getSound());
+  } catch (err) {
+    applySoundUi(null);
+  }
+}
+
+function tagSoundBindings() {
+  const bindings = soundInfo && soundInfo.tagSounds;
+  return bindings && typeof bindings === 'object' && !Array.isArray(bindings) ? bindings : {};
+}
+
+function tagSoundKey(tag) {
+  const value = String(tag || '').trim().replace(/\s+/g, ' ');
+  return value ? `tag:${value.toLowerCase()}` : null;
+}
+
+function tagSoundLabel(key) {
+  if (key === 'important') return t('tagSound.important');
+  if (typeof key === 'string' && key.startsWith('tag:')) return `#${key.slice(4)}`;
+  return String(key || '');
+}
+
+function tagSoundTagItems() {
+  const items = [{ key: 'important', label: t('tagSound.important') }];
+  const seen = new Set(['important']);
+  const tags = [];
+  const push = (key, label) => {
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    tags.push({ key, label });
+  };
+  for (const tag of knownTags) {
+    const key = tagSoundKey(tag);
+    push(key, `#${String(tag).trim()}`);
+  }
+  for (const key of Object.keys(tagSoundBindings())) {
+    if (key.startsWith('tag:')) push(key, `#${key.slice(4)}`);
+  }
+  tags.sort((a, b) => a.label.localeCompare(b.label));
+  return items.concat(tags);
+}
+
+function tagSoundSoundItems() {
+  const items = [{ value: '', label: t('tagSound.general') }];
+  for (const item of BUILTIN_SOUNDS) items.push({ value: item.id, label: t(item.key) });
+  for (const item of (soundInfo && soundInfo.custom) || []) {
+    if (item.available !== false) items.push({ value: item.id, label: item.name });
+  }
+  return items;
+}
+
+function tagSoundSoundName(id) {
+  if (!id) return t('tagSound.general');
+  return soundLabel(id) || id;
+}
+
+function tagSoundBindingFor(key) {
+  const value = tagSoundBindings()[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function syncTagSoundEditor() {
+  const tags = tagSoundTagItems();
+  if (!tags.some((item) => item.key === tagSoundTagKey)) {
+    tagSoundTagKey = tags[0] ? tags[0].key : 'important';
+    tagSoundSoundId = tagSoundBindingFor(tagSoundTagKey) || '';
+  }
+  const tag = tags.find((item) => item.key === tagSoundTagKey) || tags[0];
+  const sounds = tagSoundSoundItems();
+  if (tagSoundSoundId === null) {
+    tagSoundSoundId = tagSoundBindingFor(tagSoundTagKey) || '';
+  }
+  if (tagSoundSoundId && !sounds.some((item) => item.value === tagSoundSoundId)) {
+    tagSoundSoundId = '';
+  }
+  tagSoundTagLabel.textContent = tag ? tag.label : t('tagSound.important');
+  tagSoundTagBtn.title = tagSoundTagLabel.textContent;
+  tagSoundSoundLabel.textContent = tagSoundSoundName(tagSoundSoundId);
+  tagSoundSoundBtn.title = tagSoundSoundLabel.textContent;
+}
+
+function selectTagSoundTag(key) {
+  tagSoundTagKey = key;
+  tagSoundSoundId = tagSoundBindingFor(key) || '';
+  syncTagSoundEditor();
+}
+
+function selectTagSoundSound(id) {
+  tagSoundSoundId = id;
+  syncTagSoundEditor();
+}
+
+function openTagSoundTagMenu() {
+  if (!window.ppPicker || !ppPicker.openChoices) return;
+  const items = tagSoundTagItems().map((item) => ({ value: item.key, label: item.label }));
+  ppPicker.openChoices(tagSoundTagBtn, items, tagSoundTagKey, selectTagSoundTag, { className: 'sound-picker' });
+}
+
+function openTagSoundSoundMenu() {
+  if (!window.ppPicker || !ppPicker.openChoices) return;
+  const items = tagSoundSoundItems();
+  ppPicker.openChoices(tagSoundSoundBtn, items, tagSoundSoundId === null ? '' : tagSoundSoundId, selectTagSoundSound, { className: 'sound-picker' });
+}
+
+function renderTagSoundList() {
+  tagSoundList.replaceChildren();
+  const bindings = tagSoundBindings();
+  const entries = Object.entries(bindings)
+    .filter(([key, value]) => (key === 'important' || key.startsWith('tag:')) && typeof value === 'string')
+    .sort(([keyA], [keyB]) => {
+      if (keyA === 'important') return -1;
+      if (keyB === 'important') return 1;
+      return tagSoundLabel(keyA).localeCompare(tagSoundLabel(keyB));
+    });
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tag-sound-empty';
+    empty.textContent = t('tagSound.empty');
+    tagSoundList.appendChild(empty);
+    return;
+  }
+  for (const [key, sound] of entries) {
+    const row = document.createElement('div');
+    row.className = 'tag-sound-item';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.dataset.key = key;
+    const name = document.createElement('span');
+    name.className = 'tag-sound-item-name';
+    name.textContent = tagSoundLabel(key);
+    const soundName = document.createElement('span');
+    soundName.className = 'tag-sound-item-sound';
+    soundName.textContent = tagSoundSoundName(sound);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'tag-sound-remove';
+    remove.textContent = '\u00d7';
+    remove.title = t('tagSound.remove');
+    remove.setAttribute('aria-label', t('tagSound.remove'));
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      removeTagSoundBinding(key);
+    });
+    row.append(name, soundName, remove);
+    row.addEventListener('click', () => {
+      selectTagSoundTag(key);
+    });
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectTagSoundTag(key);
+      }
+    });
+    tagSoundList.appendChild(row);
+  }
+}
+
+async function saveTagSound() {
+  const hadSound = !!tagSoundSoundId;
+  tagSoundSave.disabled = true;
+  try {
+    const result = await api.setTagSound({ key: tagSoundTagKey, sound: tagSoundSoundId });
+    if (!result || !result.ok) {
+      if (result && result.reason === 'invalid-key') {
+        tagSoundHint.textContent = t('tagSound.error');
+      } else if (result && result.reason === 'custom-missing') {
+        tagSoundHint.textContent = t('sound.missing');
+      } else {
+        tagSoundHint.textContent = t('sound.saveError');
+      }
+      return;
+    }
+    applySoundUi(result);
+    tagSoundHint.textContent = hadSound ? t('tagSound.saved') : t('tagSound.removed');
+  } catch (err) {
+    tagSoundHint.textContent = t('sound.saveError');
+  } finally {
+    tagSoundSave.disabled = false;
+  }
+}
+
+async function removeTagSoundBinding(key) {
+  try {
+    const result = await api.setTagSound({ key, sound: '' });
+    if (!result || !result.ok) {
+      tagSoundHint.textContent = t('sound.saveError');
+      return;
+    }
+    if (tagSoundTagKey === key) tagSoundSoundId = '';
+    applySoundUi(result);
+    tagSoundHint.textContent = t('tagSound.removed');
+  } catch (err) {
+    tagSoundHint.textContent = t('sound.saveError');
+  }
+}
+
+function flashPreview() {
+  clearTimeout(previewTimer);
+  soundPreviewBtn.classList.add('playing');
+  previewTimer = setTimeout(() => soundPreviewBtn.classList.remove('playing'), 700);
+}
+
+async function previewSound(id) {
+  if (!window.ppSound) {
+    soundHint.textContent = t('sound.readError');
+    return false;
+  }
+  if (window.ppSound) window.ppSound.stop();
+  let dataUrl = null;
+  const custom = soundInfo && Array.isArray(soundInfo.custom)
+    ? soundInfo.custom.find((item) => item.id === id)
+    : null;
+  if (custom) {
+    const data = await api.getSoundData(id);
+    if (!data || data.error) {
+      soundHint.textContent = soundErrorText(data && data.error);
+      return false;
+    }
+    dataUrl = data.dataUrl;
+  }
+  if (soundInfo && soundInfo.value !== id) return false;
+  try {
+    flashPreview();
+    const played = await window.ppSound.play(id, dataUrl, Number(soundVolume.value) / 100);
+    if (custom && played === false) {
+      soundHint.textContent = t('sound.readError');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    soundHint.textContent = t('sound.readError');
+    return false;
+  }
+}
+
+async function selectSound(id) {
+  const custom = soundInfo && Array.isArray(soundInfo.custom)
+    ? soundInfo.custom.find((item) => item.id === id)
+    : null;
+  if (custom && !custom.available) {
+    soundHint.textContent = t('sound.missing');
+    return;
+  }
+  try {
+    const result = await api.setSound(id);
+    if (!result || !result.ok) {
+      soundHint.textContent = soundErrorText(result && result.reason);
+      await loadSound();
+      return;
+    }
+    applySoundUi(result);
+    soundHint.textContent = t('sound.saved');
+    await previewSound(result.value);
+  } catch (err) {
+    soundHint.textContent = t('sound.readError');
+    await loadSound();
+  }
+}
+
+function openSoundMenu() {
+  if (!window.ppPicker || !ppPicker.openChoices || soundSelectBtn.disabled) return;
+  if (window.ppSound) window.ppSound.stop();
+  const items = BUILTIN_SOUNDS.map((item) => ({ value: item.id, label: t(item.key) }));
+  for (const item of (soundInfo && soundInfo.custom) || []) {
+    items.push({ value: item.id, label: item.name, remove: true });
+  }
+  const maxCustom = soundInfo && Number.isFinite(Number(soundInfo.maxCustom)) ? Number(soundInfo.maxCustom) : 5;
+  if (!soundInfo || (soundInfo.custom || []).length < maxCustom) {
+    items.push({ value: '__add', label: `+ ${t('sound.add')}` });
+  }
+  ppPicker.openChoices(
+    soundSelectBtn,
+    items,
+    soundInfo ? soundInfo.selected : 'soft',
+    (value) => {
+      if (value === '__add') {
+        chooseSoundFile();
+        return;
+      }
+      selectSound(value);
+    },
+    {
+      className: 'sound-picker',
+      onRemove: removeSound,
+      removeTitle: t('sound.remove')
+    }
+  );
+}
+
+async function chooseSoundFile() {
+  if (window.ppSound) window.ppSound.stop();
+  soundSelectBtn.disabled = true;
+  soundPreviewBtn.disabled = true;
+  try {
+    const result = await api.chooseSound();
+    if (!result) return;
+    if (result.error) {
+      soundHint.textContent = soundErrorText(result.error);
+      return;
+    }
+    openSoundName(result);
+  } catch (err) {
+    soundHint.textContent = t('sound.saveError');
+  } finally {
+    soundSelectBtn.disabled = false;
+    soundPreviewBtn.disabled = false;
+  }
+}
+
+function openSoundName(result) {
+  pendingSound = result;
+  soundNameInput.value = result.suggestedName || '';
+  soundNameHint.textContent = t('sound.nameHint');
+  soundNameOverlay.hidden = false;
+  setTimeout(() => {
+    soundNameInput.focus();
+    soundNameInput.select();
+  }, 0);
+}
+
+function closeSoundName() {
+  soundNameOverlay.hidden = true;
+  pendingSound = null;
+  soundNameInput.value = '';
+}
+
+async function saveSoundName() {
+  if (!pendingSound) return;
+  const name = soundNameInput.value.trim();
+  if (!name) {
+    soundNameHint.textContent = t('sound.nameRequired');
+    soundNameInput.focus();
+    return;
+  }
+  soundNameSave.disabled = true;
+  try {
+    const result = await api.addSound({ source: pendingSound.source, name });
+    if (!result || result.error) {
+      soundNameHint.textContent = soundErrorText(result && result.error);
+      return;
+    }
+    closeSoundName();
+    applySoundUi(result);
+    soundHint.textContent = t('sound.added');
+    await previewSound(result.value);
+  } catch (err) {
+    soundNameHint.textContent = t('sound.saveError');
+  } finally {
+    soundNameSave.disabled = false;
+  }
+}
+
+async function removeSound(id) {
+  if (window.ppSound) window.ppSound.stop();
+  try {
+    const result = await api.removeSound(id);
+    if (!result || result.canceled) return;
+    if (!result.ok) {
+      soundHint.textContent = soundErrorText(result.reason);
+      return;
+    }
+    applySoundUi(result);
+    soundHint.textContent = t('sound.removed');
+  } catch (err) {
+    soundHint.textContent = t('sound.saveError');
+  }
+}
+
+soundSelectBtn.addEventListener('click', openSoundMenu);
+soundPreviewBtn.addEventListener('click', () => {
+  if (soundInfo) previewSound(soundInfo.selected);
+});
+soundVolume.addEventListener('input', () => {
+  setSoundVolumeUi(soundVolume.value);
+});
+soundVolume.addEventListener('change', async () => {
+  try {
+    const result = await api.setSoundVolume(Number(soundVolume.value));
+    if (result && result.ok) {
+      applySoundUi(result);
+    } else {
+      await loadSound();
+      soundHint.textContent = t('sound.saveError');
+    }
+  } catch (err) {
+    await loadSound();
+    soundHint.textContent = t('sound.saveError');
+  }
+});
+tagSoundTagBtn.addEventListener('click', openTagSoundTagMenu);
+tagSoundSoundBtn.addEventListener('click', openTagSoundSoundMenu);
+tagSoundSave.addEventListener('click', saveTagSound);
+soundNameSave.addEventListener('click', saveSoundName);
+soundNameCancel.addEventListener('click', closeSoundName);
+soundNameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    saveSoundName();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSoundName();
+  }
+});
+soundNameOverlay.addEventListener('click', (event) => {
+  if (event.target === soundNameOverlay) closeSoundName();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !soundNameOverlay.hidden) closeSoundName();
+});
+if (window.i18n) {
+  window.i18n.onLanguageChange(() => {
+    if (soundInfo) applySoundUi(soundInfo);
+    applyWidgetState(widgetState);
+  });
 }
 
 function applyLanguageUi(language) {
@@ -1108,6 +1720,8 @@ function setSettingsOpen(open) {
   settingsBody.hidden = !open;
   settingsToggle.setAttribute('aria-expanded', String(open));
   settingsCard.classList.toggle('open', open);
+  if (!open && window.ppSound) window.ppSound.stop();
+  if (!open) closeSoundName();
 }
 
 settingsToggle.addEventListener('click', () => {
@@ -1307,6 +1921,326 @@ document.addEventListener('keydown', (event) => {
   } else if (!event.shiftKey && document.activeElement === last) {
     event.preventDefault();
     first.focus();
+  }
+}, true);
+
+let paletteOpen = false;
+let lastFocusedBeforePalette = null;
+let paletteResults = [];
+let paletteIndex = -1;
+
+function activateFilter(filter) {
+  searchFilter = filter;
+  searchQuery = '';
+  searchInput.value = '';
+  activeTag = null;
+  syncSearchUi();
+  render();
+}
+
+function paletteCommands() {
+  const commands = [
+    {
+      id: 'new-task',
+      label: t('palette.newTask'),
+      keywords: 'new task add создать новая дело добавить',
+      run: () => {
+        resetAddMode(true);
+        render();
+        titleInput.focus();
+        titleInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    },
+    {
+      id: 'search',
+      label: t('palette.search'),
+      keywords: 'search find найти поиск задача',
+      run: () => {
+        clearSearch();
+        render();
+        searchInput.focus();
+        searchInput.select();
+        searchInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    },
+    {
+      id: 'today',
+      label: t('palette.today'),
+      keywords: 'today сегодня день',
+      run: () => {
+        clearSearch();
+        selectedDate = todayString();
+        view = 'day';
+        render();
+      }
+    },
+    {
+      id: 'week',
+      label: t('palette.week'),
+      keywords: 'week неделя',
+      run: () => {
+        clearSearch();
+        selectedDate = todayString();
+        view = 'week';
+        render();
+      }
+    },
+    {
+      id: 'filter-active',
+      label: t('palette.active'),
+      keywords: 'active активные фильтр',
+      run: () => activateFilter('active')
+    },
+    {
+      id: 'filter-done',
+      label: t('palette.done'),
+      keywords: 'done completed выполненные готовые',
+      run: () => activateFilter('done')
+    },
+    {
+      id: 'filter-archived',
+      label: t('palette.archive'),
+      keywords: 'archive архив',
+      run: () => activateFilter('archived')
+    },
+    {
+      id: 'stats',
+      label: t('palette.stats'),
+      keywords: 'stats statistics статистика',
+      run: () => {
+        setStatsOpen(true);
+        statsCard.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    },
+    {
+      id: 'settings',
+      label: t('palette.settings'),
+      keywords: 'settings настройки',
+      run: () => {
+        setSettingsOpen(true);
+        settingsCard.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    },
+    {
+      id: 'mcp',
+      label: t('palette.mcp'),
+      keywords: 'mcp ai connect подключить агент',
+      run: () => openMcpPanel()
+    },
+    {
+      id: 'export',
+      label: t('palette.export'),
+      keywords: 'export экспорт json',
+      run: () => exportBtn.click()
+    },
+    {
+      id: 'import',
+      label: t('palette.import'),
+      keywords: 'import импорт json',
+      run: () => importBtn.click()
+    },
+    {
+      id: 'folder',
+      label: t('palette.folder'),
+      keywords: 'folder data папка данные',
+      run: () => api.openDataFolder()
+    }
+  ];
+
+  for (const button of themeGrid.querySelectorAll('.theme-card')) {
+    const value = button.dataset.theme;
+    const name = t(`theme.${value}`);
+    commands.push({
+      id: `theme-${value}`,
+      label: t('palette.theme', { name }),
+      keywords: `theme тема ${value} ${name}`,
+      run: async () => {
+        const theme = await api.setTheme(value);
+        applyTheme(theme);
+      }
+    });
+  }
+
+  for (const button of languageRow.querySelectorAll('.lang-card')) {
+    const value = button.dataset.language;
+    const name = t(`language.${value}`);
+    commands.push({
+      id: `language-${value}`,
+      label: t('palette.language', { name }),
+      keywords: `language язык locale ${value} ${name}`,
+      run: async () => {
+        const language = await api.setLanguage(value);
+        if (window.i18n.getLanguage() !== language) window.i18n.setLanguage(language);
+        applyLanguageUi(language);
+      }
+    });
+  }
+
+  return commands;
+}
+
+function fuzzyScore(text, query) {
+  if (!query) return 0;
+  const hay = String(text || '').toLowerCase();
+  const needle = String(query || '').toLowerCase();
+  const direct = hay.indexOf(needle);
+  if (direct !== -1) return 1000 - direct;
+  let from = 0;
+  let streak = 0;
+  let score = 0;
+  for (const char of needle) {
+    const index = hay.indexOf(char, from);
+    if (index === -1) return -1;
+    score += 1;
+    if (index === from) {
+      streak += 1;
+      score += streak;
+    } else {
+      streak = 0;
+    }
+    from = index + 1;
+  }
+  return score;
+}
+
+function setPaletteActive(index) {
+  if (!paletteResults.length) {
+    paletteIndex = -1;
+    paletteInput.setAttribute('aria-activedescendant', '');
+    return;
+  }
+  paletteIndex = ((index % paletteResults.length) + paletteResults.length) % paletteResults.length;
+  const items = [...paletteList.children];
+  items.forEach((item, itemIndex) => {
+    const active = itemIndex === paletteIndex;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const activeItem = items[paletteIndex];
+  if (activeItem) {
+    activeItem.scrollIntoView({ block: 'nearest' });
+    paletteInput.setAttribute('aria-activedescendant', activeItem.id);
+  }
+}
+
+function renderPalette() {
+  const query = paletteInput.value.trim();
+  const commands = paletteCommands();
+  const scored = commands
+    .map((command, order) => ({
+      command,
+      order,
+      score: fuzzyScore(`${command.label} ${command.keywords || ''} ${command.id}`, query)
+    }))
+    .filter((item) => item.score >= 0)
+    .sort((a, b) => (b.score - a.score) || (a.order - b.order));
+  paletteResults = scored.map((item) => item.command);
+  paletteList.replaceChildren();
+
+  if (!paletteResults.length) {
+    const empty = document.createElement('li');
+    empty.className = 'palette-empty';
+    empty.setAttribute('role', 'presentation');
+    empty.textContent = t('palette.empty');
+    paletteList.appendChild(empty);
+    paletteIndex = -1;
+    paletteInput.setAttribute('aria-activedescendant', '');
+    return;
+  }
+
+  paletteResults.forEach((command, index) => {
+    const item = document.createElement('li');
+    item.className = 'palette-item';
+    item.id = `palette-option-${index}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', 'false');
+    const label = document.createElement('span');
+    label.className = 'palette-label';
+    label.textContent = command.label;
+    item.appendChild(label);
+    item.addEventListener('mousedown', (event) => event.preventDefault());
+    item.addEventListener('mousemove', () => setPaletteActive(index));
+    item.addEventListener('click', () => runPaletteCommand(command));
+    paletteList.appendChild(item);
+  });
+  setPaletteActive(0);
+}
+
+function openPalette() {
+  if (activeHotkeyCapture) return;
+  if (paletteOpen) {
+    paletteInput.focus();
+    return;
+  }
+  if (mcpOpen) closeMcpPanel();
+  lastFocusedBeforePalette = document.activeElement;
+  paletteOpen = true;
+  paletteOverlay.hidden = false;
+  paletteInput.value = '';
+  paletteInput.setAttribute('aria-expanded', 'true');
+  renderPalette();
+  paletteInput.focus();
+}
+
+function closePalette() {
+  if (!paletteOpen) return;
+  paletteOpen = false;
+  paletteOverlay.hidden = true;
+  paletteInput.setAttribute('aria-expanded', 'false');
+  paletteInput.setAttribute('aria-activedescendant', '');
+  paletteInput.value = '';
+  const previous = lastFocusedBeforePalette;
+  lastFocusedBeforePalette = null;
+  if (previous && previous.isConnected && typeof previous.focus === 'function') previous.focus();
+}
+
+async function runPaletteCommand(command) {
+  if (!command) return;
+  closePalette();
+  try {
+    await command.run();
+  } catch (err) {
+    console.error('[palette] command failed:', err);
+  }
+}
+
+paletteInput.addEventListener('input', renderPalette);
+paletteOverlay.addEventListener('mousedown', (event) => {
+  if (event.target === paletteOverlay) closePalette();
+});
+
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && String(event.key).toLowerCase() === 'k') {
+    if (activeHotkeyCapture) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (paletteOpen) closePalette();
+    else openPalette();
+    return;
+  }
+  if (!paletteOpen || event.isComposing) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closePalette();
+    return;
+  }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    event.stopPropagation();
+    setPaletteActive(paletteIndex + (event.key === 'ArrowDown' ? 1 : -1));
+    return;
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    runPaletteCommand(paletteResults[paletteIndex]);
+    return;
+  }
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    event.stopPropagation();
+    paletteInput.focus();
   }
 }, true);
 
@@ -1534,7 +2468,7 @@ function focusTaskRow(delta) {
 }
 
 document.addEventListener('keydown', (event) => {
-  if (mcpOpen) return;
+  if (paletteOpen || mcpOpen) return;
   if (isTypingTarget(event.target)) return;
 
   if ((event.ctrlKey || event.metaKey) && (event.key === 'f' || event.key === 'F')) {
@@ -1610,6 +2544,7 @@ window.i18n.onLanguageChange((language) => {
   refresh();
   loadInfo();
   loadCleanup();
+  loadSound();
 });
 
 api.onThemeChanged((theme) => applyTheme(theme));

@@ -59,6 +59,14 @@ function sortOverdue(a, b) {
   return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
 }
 
+function recurrenceTitle(task) {
+  if (task.recurrence === 'weekly') return t('widget.repeatsWeekly');
+  if (task.recurrence === 'monthly') return t('widget.repeatsMonthly');
+  if (task.recurrence === 'weekdays') return t('widget.repeatsWeekdays');
+  if (task.recurrence === 'everyN') return t('widget.repeatsEveryN', { count: task.recurrenceInterval || 2 });
+  return t('widget.repeatsDaily');
+}
+
 function render() {
   const now = new Date();
   todayLabel.textContent = `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()} · ${window.i18n.weekdayShort(now.getDay())}`;
@@ -130,7 +138,7 @@ function buildRow(task, options = {}) {
   if (task.recurrence !== 'none') {
     const dot = document.createElement('span');
     dot.className = 'rec-dot';
-    dot.title = task.recurrence === 'weekly' ? t('widget.repeatsWeekly') : t('widget.repeatsDaily');
+    dot.title = recurrenceTitle(task);
     li.appendChild(dot);
   }
 
