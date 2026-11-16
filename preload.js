@@ -2,6 +2,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   listTasks: () => ipcRenderer.invoke('tasks:list'),
+  listArchived: () => ipcRenderer.invoke('tasks:list-archived'),
+  archiveTask: (id) => ipcRenderer.invoke('tasks:archive', id),
+  unarchiveTask: (id) => ipcRenderer.invoke('tasks:unarchive', id),
+  archiveDone: (days) => ipcRenderer.invoke('tasks:archive-done', days),
+  purgeArchived: (days) => ipcRenderer.invoke('tasks:purge-archived', days),
   addTask: (payload) => ipcRenderer.invoke('tasks:add', payload),
   restoreTask: (snapshot) => ipcRenderer.invoke('tasks:restore', snapshot),
   updateTask: (id, patch) => ipcRenderer.invoke('tasks:update', { id, patch }),
@@ -33,7 +38,18 @@ contextBridge.exposeInMainWorld('api', {
   getLogo: () => ipcRenderer.invoke('logo:get'),
   chooseLogo: () => ipcRenderer.invoke('logo:choose'),
   resetLogo: () => ipcRenderer.invoke('logo:reset'),
+  getSound: () => ipcRenderer.invoke('sound:get'),
+  getSoundData: (id) => ipcRenderer.invoke('sound:data', id),
+  setSound: (id) => ipcRenderer.invoke('sound:set', id),
+  setSoundVolume: (value) => ipcRenderer.invoke('sound:set-volume', value),
+  setTagSound: (payload) => ipcRenderer.invoke('sound:set-tag', payload),
+  chooseSound: () => ipcRenderer.invoke('sound:choose'),
+  addSound: (payload) => ipcRenderer.invoke('sound:add', payload),
+  removeSound: (id) => ipcRenderer.invoke('sound:remove', id),
   pinWidget: () => ipcRenderer.invoke('widget:pin'),
+  onWidgetState: (callback) => {
+    ipcRenderer.on('widget:state', (_event, state) => callback(state));
+  },
   setWidgetOnTop: (enabled) => ipcRenderer.invoke('widget:on-top-set', enabled),
   getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),
   setHotkey: (kind, accelerator) => ipcRenderer.invoke('hotkeys:set', { kind, accelerator }),
