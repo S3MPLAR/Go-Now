@@ -413,7 +413,7 @@
     open(input, 'tags', { tags, button, onHide });
   }
 
-  function openChoices(anchor, items, selected, onPick) {
+  function openChoices(anchor, items, selected, onPick, options = {}) {
     if (!anchor) return;
     if (active && active.kind === 'choices' && active.input === anchor) {
       close();
@@ -422,9 +422,12 @@
     close();
     const popup = document.createElement('div');
     popup.className = 'picker-popup picker-choices';
+    if (options.className) popup.classList.add(options.className);
     const list = document.createElement('div');
     list.className = 'pp-choices-list';
     for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'pp-choice-row';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = item.value === selected ? 'pp-choice selected' : 'pp-choice';
@@ -434,7 +437,22 @@
         onPick(item.value);
         close();
       });
-      list.appendChild(button);
+      row.appendChild(button);
+      if (item.remove && options.onRemove) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'pp-choice-remove';
+        remove.textContent = '\u00d7';
+        remove.title = options.removeTitle || '';
+        remove.setAttribute('aria-label', options.removeTitle || 'Remove');
+        remove.addEventListener('click', (event) => {
+          event.stopPropagation();
+          close();
+          options.onRemove(item.value);
+        });
+        row.appendChild(remove);
+      }
+      list.appendChild(row);
     }
     popup.appendChild(list);
     document.body.appendChild(popup);
