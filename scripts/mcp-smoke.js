@@ -97,7 +97,19 @@ function printTimings() {
     const tools = await rpc('tools/list', {});
     const names = tools.tools.map((tool) => tool.name);
     console.log(`Tools (${names.length}): ${names.join(', ')}`);
-    for (const required of ['list_tasks', 'add_task', 'add_tasks', 'update_task', 'delete_task']) {
+    for (const required of [
+      'list_tasks',
+      'add_task',
+      'add_tasks',
+      'update_task',
+      'delete_task',
+      'complete_task',
+      'snooze_task',
+      'get_stats',
+      'list_tags',
+      'archive_task',
+      'restore_task'
+    ]) {
       if (!names.includes(required)) throw new Error(`missing tool: ${required}`);
     }
 
@@ -121,6 +133,34 @@ function printTimings() {
     const target = found.tasks[0];
     const updated = await call('update_task', { id: target.id, note: 'updated by smoke test' });
     console.log(`update_task: source=${updated.source}, note="${updated.task.note}"`);
+
+    const stats = await call('get_stats');
+    console.log(`get_stats: active=${stats.stats.active}, done=${stats.stats.done}, archived=${stats.stats.archived}`);
+
+    const tags = await call('list_tags');
+    console.log(`list_tags: count=${tags.tags.length}`);
+
+    const completed = await call('complete_task', { id: target.id });
+    if (!completed.task.done) throw new Error('complete_task did not mark the task done');
+    console.log(`complete_task: done=${completed.task.done}`);
+
+    const snoozed = await call('snooze_task', { id: target.id, minutes: 5 });
+    if (!Number.isFinite(snoozed.task.snoozeUntil)) throw new Error('snooze_task did not set snoozeUntil');
+    console.log(`snooze_task: minutes=5`);
+
+    const archived = await call('archive_task', { id: target.id });
+    if (!archived.task.archived) throw new Error('archive_task did not archive the task');
+    console.log(`archive_task: archived=${archived.task.archived}`);
+
+    const archivedList = await call('list_tasks', { search: 'MCP smoke', include_archived: true });
+    if (!archivedList.tasks.some((task) => task.id === target.id)) {
+      throw new Error('list_tasks include_archived did not return the archived task');
+    }
+    console.log(`list_tasks include_archived: count=${archivedList.tasks.length}`);
+
+    const restored = await call('restore_task', { id: target.id });
+    if (restored.task.archived) throw new Error('restore_task did not restore the task');
+    console.log(`restore_task: archived=${restored.task.archived}`);
 
     for (const id of created.splice(0)) {
       const deleted = await call('delete_task', { id });

@@ -29,6 +29,13 @@ check('no date купить хлеб', { title: 'купить хлеб', notify:
 check('без срока позвонить', { title: 'позвонить', notify: false, date: null });
 check('купить #дом #работа #дом', { title: 'купить', tags: ['дом', 'работа'] });
 check('!! срочно', { title: 'срочно', important: true });
+check('позвонить каждый день', { title: 'позвонить', recurrence: 'daily', recurrenceInterval: null });
+check('отчёт еженедельно', { title: 'отчёт', recurrence: 'weekly' });
+check('оплатить каждый месяц', { title: 'оплатить', recurrence: 'monthly' });
+check('стендап по будням', { title: 'стендап', recurrence: 'weekdays' });
+check('тренировка каждые 3 дня', { title: 'тренировка', recurrence: 'everyN', recurrenceInterval: 3 });
+check('every 2 days stretch', { title: 'stretch', recurrence: 'everyN', recurrenceInterval: 2 });
+check('без срока каждый день', { title: '', notify: false, recurrence: 'none', recurrenceInterval: null });
 check('завтра', { title: '', date: '2026-11-10' });
 check('', { title: '' });
 
